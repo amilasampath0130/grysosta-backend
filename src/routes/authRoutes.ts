@@ -3,8 +3,8 @@ import {
   register,
   login,
   profile,
-  authenticateToken
 } from "../controllers/authController.js";
+import { authenticateToken } from "../middleware/auth.js";
 
 const router = express.Router();
 

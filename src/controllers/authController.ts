@@ -21,44 +21,7 @@ export const generateToken = (userId: string): string => {
 };
 
 // ================= AUTH MIDDLEWARE =================
-export const authenticateToken = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const token = req.header("Authorization")?.replace("Bearer ", "");
 
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "Access denied. No token provided."
-      });
-    }
-
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET as string
-    ) as JwtPayload;
-
-    const user = await User.findById(decoded.userId);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found"
-      });
-    }
-
-    req.user = user;
-    next();
-
-  } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: "Invalid or expired token"
-    });
-  }
-};
 
 // ================= REGISTER =================
 export const register = async (req: Request, res: Response) => {

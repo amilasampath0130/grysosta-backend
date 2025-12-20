@@ -3,7 +3,7 @@ import mongoose, { Document, Types } from "mongoose";
 import bcrypt from "bcryptjs";
 
 export interface IUser extends Document {
- _id: Types.ObjectId;   // ✅ THIS FIXES EVERYTHING
+ _id: Types.ObjectId;   
   name: string;
   username: string;
   email: string;
