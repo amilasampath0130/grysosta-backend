@@ -12,11 +12,11 @@ export interface AuthRequest extends Request {
 }
 
 // ================= TOKEN =================
-export const generateToken = (userId: string): string => {
+export const generateToken = (userId: string, role: string): string => {
   return jwt.sign(
-    { userId },
+    { userId, role },
     process.env.JWT_SECRET as string,
-    { expiresIn: "15d" }
+    { expiresIn: "1m" }
   );
 };
 
@@ -26,7 +26,7 @@ export const generateToken = (userId: string): string => {
 // ================= REGISTER =================
 export const register = async (req: Request, res: Response) => {
   try {
-    const { name, username, email, password, mobileNumber } = req.body;
+    const { name, username, email, password, mobileNumber, role } = req.body;
 
     const exists = await User.findOne({
       $or: [{ email }, { username }]
@@ -47,12 +47,13 @@ export const register = async (req: Request, res: Response) => {
       email,
       password,
       mobileNumber,
-      profileImage
+      profileImage,
+      role
     });
 
     await user.save();
 
-    const token = generateToken(user._id.toString());
+    const token = generateToken(user._id.toString(), user.role);
 
     res.status(201).json({
       success: true,
@@ -85,7 +86,7 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const token = generateToken(user._id.toString());
+    const token = generateToken(user._id.toString(), user.role);
 
     res.json({
       success: true,
