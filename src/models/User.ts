@@ -11,6 +11,7 @@ export interface IUser extends Document {
   mobileNumber?: string;
   profileImage?: string;
   isVerified: boolean;
+  role: string;
   authProvider: "local" | "google";
   comparePassword(password: string): Promise<boolean>;
 }
@@ -31,7 +32,8 @@ const userSchema = new mongoose.Schema<IUser>(
       type: String,
       enum: ["local", "google"],
       default: "local"
-    }
+    },
+    role: { type: String, default: "user", enum: ["user", "admin", "vendor"] }
   },
   { timestamps: true }
 );
