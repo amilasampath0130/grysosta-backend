@@ -3,6 +3,7 @@ import "dotenv/config";
 
 import authRoutes from "./routes/authRoutes.js";
 import { connectDB } from "./lib/db.js";
+import userRoutes from "./routes/userRoutes.js";
 
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 3000;
@@ -10,6 +11,7 @@ const PORT: number = Number(process.env.PORT) || 3000;
 app.use(express.json());
 
 app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 
 app.get("/api/health", (req: Request, res: Response) => {
   res.status(200).json({
