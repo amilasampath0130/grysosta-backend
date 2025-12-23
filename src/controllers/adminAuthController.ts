@@ -1,7 +1,7 @@
 import { Request,Response } from "express";
 import User, { IUser } from "../models/User.js";
 
-import { generateToken } from "./authController.js";
+import { AuthRequest, generateToken } from "./authController.js";
 // ================= ADMIN LOGIN =================
 export const adminLogin = async (req: Request, res: Response) => {
   try {
@@ -20,5 +20,27 @@ export const adminLogin = async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Admin login error:", error);
     res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const getAdminProfile = async (req: AuthRequest, res: Response) => {
+  res.json({
+    success: true,
+    user: req.user
+  });
+};
+export const getAllUsers = async (req: AuthRequest, res: Response) => {
+  try {
+    const users = await User.find().select("-password"); // 🔒 exclude password
+
+    res.status(200).json({
+      success: true,
+      count: users.length,
+      users
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch users"
+    });
   }
 };
