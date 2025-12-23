@@ -18,7 +18,7 @@ router.post("/login", login);
 router.get("/profile", authenticateToken, profile);
 
 // Admin route only
-router.post("/admin/login", adminLogin, authorizeRoles("admin"));
+router.post("/admin/login", adminLogin);
 router.get(
   "/admin/profile",
   authenticateToken,
