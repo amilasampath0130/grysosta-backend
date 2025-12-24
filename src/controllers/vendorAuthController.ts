@@ -5,8 +5,8 @@ import { sendEmail } from "../utils/sendEmail.js";
 import { AuthRequest, generateToken } from "./authController.js";
 import bcrypt from "bcryptjs";
 
-// ================= ADMIN LOGIN =================
-export const adminLogin = async (req: Request, res: Response) => {
+// ================= VENDOR LOGIN =================
+export const vendorLogin = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
   const user = await User.findOne({ email, role: "admin" });
@@ -29,8 +29,8 @@ export const adminLogin = async (req: Request, res: Response) => {
   // 📧 Send Email
   await sendEmail(
     user.email,
-    "Admin Verification Code",
-    `<h2>Your admin verification code</h2>
+    "Vendor Verification Code",
+    `<h2>Your Vendor verification code</h2>
      <h1>${otp}</h1>
      <p>Expires in 5 minutes</p>`
   );
@@ -41,35 +41,17 @@ export const adminLogin = async (req: Request, res: Response) => {
   });
 };
 
-// ================= ADMIN PROFILE =================
+// ================= VENDOR PROFILE =================
 
-export const getAdminProfile = async (req: AuthRequest, res: Response) => {
+export const getVendorProfile = async (req: AuthRequest, res: Response) => {
   res.json({
     success: true,
     user: req.user
   });
 };
 
-// ================= GET ALL USERS =================
-export const getAllUsers = async (req: AuthRequest, res: Response) => {
-  try {
-    const users = await User.find().select("-password"); // 🔒 exclude password
-
-    res.status(200).json({
-      success: true,
-      count: users.length,
-      users
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch users"
-    });
-  }
-};
-
-// ================= VERIFY ADMIN OTP =================
-export const verifyAdminOtp = async (req: Request, res: Response) => {
+// ================= VERIFY VENDOR OTP =================
+export const verifyVendorOtp = async (req: Request, res: Response) => {
   const { email, otp } = req.body;
 
   const user = await User.findOne({ email, role: "admin" });

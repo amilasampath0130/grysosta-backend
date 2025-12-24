@@ -16,11 +16,9 @@ export const generateToken = (userId: string, role: string): string => {
   return jwt.sign(
     { userId, role },
     process.env.JWT_SECRET as string,
-    { expiresIn: "15d" }
+    { expiresIn: "10M" }
   );
 };
-
-// ================= AUTH MIDDLEWARE =================
 
 
 // ================= REGISTER =================

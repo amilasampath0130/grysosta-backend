@@ -3,7 +3,7 @@ import mongoose, { Document, Types } from "mongoose";
 import bcrypt from "bcryptjs";
 
 export interface IUser extends Document {
- _id: Types.ObjectId;   
+  _id: Types.ObjectId;
   name: string;
   username: string;
   email: string;
@@ -12,6 +12,8 @@ export interface IUser extends Document {
   profileImage?: string;
   isVerified: boolean;
   role: string;
+  adminOtp?: string;
+  adminOtpExpires?: Date;
   authProvider: "local" | "google";
   comparePassword(password: string): Promise<boolean>;
 }
@@ -26,14 +28,16 @@ const userSchema = new mongoose.Schema<IUser>(
     profileImage: String,
     isVerified: {
       type: Boolean,
-      default: true // ✅ always true now
+      default: true, // ✅ always true now
     },
+    adminOtp: { type: String },
+    adminOtpExpires: { type: Date },
     authProvider: {
       type: String,
       enum: ["local", "google"],
-      default: "local"
+      default: "local",
     },
-    role: { type: String, default: "user", enum: ["user", "admin", "vendor"] }
+    role: { type: String, default: "user", enum: ["user", "admin", "vendor"] },
   },
   { timestamps: true }
 );

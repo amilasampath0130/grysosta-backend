@@ -6,7 +6,7 @@ import {
 } from "../controllers/authController.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { authorizeRoles } from "../middleware/authMiddleware.js";
-import { adminLogin, getAdminProfile, } from "../controllers/adminAuthController.js";
+import { adminLogin, getAdminProfile, verifyAdminOtp, } from "../controllers/adminAuthController.js";
 
 const router = express.Router();
 
@@ -18,11 +18,12 @@ router.post("/login", login);
 router.get("/profile", authenticateToken, profile);
 
 // Admin route only
-router.post("/admin/login", adminLogin);
-router.get(
-  "/admin/profile",
-  authenticateToken,
-  authorizeRoles("admin"),
-  getAdminProfile
-)
+// router.post("/admin/login", adminLogin);
+// router.get(
+//   "/admin/profile",
+//   authenticateToken,
+//   authorizeRoles("admin"),
+//   getAdminProfile
+// );
+// router.post("/admin/verify-otp", verifyAdminOtp);
 export default router;
