@@ -14,6 +14,7 @@ export interface IUser extends Document {
   role: string;
   adminOtp?: string;
   adminOtpExpires?: Date;
+  adminOtpSentAt?: Date;
   authProvider: "local" | "google";
   comparePassword(password: string): Promise<boolean>;
 }
@@ -32,6 +33,7 @@ const userSchema = new mongoose.Schema<IUser>(
     },
     adminOtp: { type: String },
     adminOtpExpires: { type: Date },
+    adminOtpSentAt: { type: Date },
     authProvider: {
       type: String,
       enum: ["local", "google"],

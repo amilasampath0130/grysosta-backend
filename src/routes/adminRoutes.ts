@@ -1,18 +1,21 @@
 import express from "express";
 import { authenticateToken } from "../middleware/auth.js";
 import { authorizeRoles } from "../middleware/authMiddleware.js";
-import { adminLogin, getAdminProfile, getAllUsers, verifyAdminOtp } from "../controllers/adminAuthController.js";
-
+import {
+  adminLogin,
+  getAdminProfile,
+  getAllUsers,
+  verifyAdminOtp,
+  resendAdminOtp,
+  adminOtpStatus,
+} from "../controllers/adminAuthController.js";
 
 const router = express.Router();
 
-router.get(
-  "/users",
-  authenticateToken,
-  authorizeRoles("admin"),
-  getAllUsers
-);
+router.get("/users", authenticateToken, authorizeRoles("admin"), getAllUsers);
 router.post("/login", adminLogin);
+router.post("/resend-otp", resendAdminOtp);
+router.get("/otp-status", adminOtpStatus);
 router.get(
   "/profile",
   authenticateToken,
