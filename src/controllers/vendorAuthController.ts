@@ -9,7 +9,7 @@ import bcrypt from "bcryptjs";
 export const vendorLogin = async (req: Request, res: Response) => {
   const { email, password } = req.body;
 
-  const user = await User.findOne({ email, role: "admin" });
+  const user = await User.findOne({ email, role: { $in: ["user", "admin"] } });
   if (!user) {
     return res
       .status(401)
