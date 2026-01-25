@@ -29,7 +29,7 @@ export const adminLogin = async (req: Request, res: Response) => {
     const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
     if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
       const minutesLeft = Math.ceil(
-        (COOLDOWN_MINUTES * 60 * 1000 - elapsed) / (60 * 1000)
+        (COOLDOWN_MINUTES * 60 * 1000 - elapsed) / (60 * 1000),
       );
       return res.status(429).json({
         success: false,
@@ -52,7 +52,7 @@ export const adminLogin = async (req: Request, res: Response) => {
     "Admin Verification Code",
     `<h2>Your admin verification code</h2>
      <h1>${otp}</h1>
-     <p>Expires in 5 minutes</p>`
+     <p>Expires in 5 minutes</p>`,
   );
 
   res.json({
@@ -84,7 +84,7 @@ export const resendAdminOtp = async (req: Request, res: Response) => {
 
   const otp = generateOtp();
   user.adminOtp = await bcrypt.hash(otp, 10);
-  user.adminOtpExpires = new Date(Date.now() + 60*1000); // 1 min
+  user.adminOtpExpires = new Date(Date.now() + 60 * 1000); // 1 min
   user.adminOtpSentAt = new Date();
   await user.save();
 
@@ -93,7 +93,7 @@ export const resendAdminOtp = async (req: Request, res: Response) => {
     "Admin Verification Code",
     `<h2>Your admin verification code</h2>
      <h1>${otp}</h1>
-     <p>Expires in 5 minutes</p>`
+     <p>Expires in 5 minutes</p>`,
   );
 
   res.json({ success: true, message: "Verification code sent to email" });
@@ -176,4 +176,16 @@ export const verifyAdminOtp = async (req: Request, res: Response) => {
     success: true,
     data: { token },
   });
+};
+
+// ================= GET ALL ADMINS =================
+export const getAllAdmins = async (req: AuthRequest, res: Response) => {
+  try {
+    const admins = await User.find({ role: "admin" }).select(
+      "name email createdAt",
+    );
+    res.json({ success: true, admins });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };
