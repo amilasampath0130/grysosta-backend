@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import jwt from "jsonwebtoken";
+import jwt, { type SignOptions, type Secret } from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import User, { IUser } from "../models/User.js";
 import { generateOtp } from "../utils/generateOtp.js";
@@ -15,10 +15,17 @@ export interface AuthRequest extends Request {
 }
 
 // ================= TOKEN =================
-export const generateToken = (userId: string, role: string): string => {
-  return jwt.sign({ userId, role }, process.env.JWT_SECRET as string, {
-    expiresIn: "10M",
-  });
+export const generateToken = (
+  userId: string,
+  role: string,
+  expiresIn: SignOptions["expiresIn"] = "30m",
+): string => {
+  const jwtSecret = process.env.JWT_SECRET as Secret | undefined;
+  if (!jwtSecret) {
+    throw new Error("JWT_SECRET is not defined");
+  }
+
+  return jwt.sign({ userId, role }, jwtSecret, { expiresIn });
 };
 
 // ================= REGISTER =================
@@ -150,21 +157,17 @@ export const verifyOtp = async (req: Request, res: Response) => {
     }
 
     if (!user.emailOtp || !user.emailOtpExpires || !user.emailOtpSentAt) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "No OTP found. Please request a new code.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "No OTP found. Please request a new code.",
+      });
     }
 
     if (new Date() > new Date(user.emailOtpExpires)) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "OTP has expired. Please request a new code.",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "OTP has expired. Please request a new code.",
+      });
     }
 
     const isMatch = await bcrypt.compare(otp, user.emailOtp);

@@ -141,12 +141,8 @@ const userSchema = new mongoose.Schema<IUser>(
   },
 );
 
-/* =======================
-   Indexes (Performance)
-======================= */
-
-userSchema.index({ email: 1 });
-userSchema.index({ username: 1 });
+/* Indexes are derived from field definitions (unique: true).
+  Avoid duplicate manual index() calls to prevent Mongoose warnings. */
 
 /* =======================
    Hooks

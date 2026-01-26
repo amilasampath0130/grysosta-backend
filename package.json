@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon --watch src --exec tsx src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "verify:email": "tsx scripts/verify-email.ts"
   },
   "keywords": [],
   "type": "module",

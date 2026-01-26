@@ -11,6 +11,7 @@ import bcrypt from "bcryptjs";
 
 const OTP_EXPIRY_MINUTES = 5;
 const OTP_COOLDOWN_MINUTES = 1;
+const VENDOR_SESSION_MINUTES = 30;
 
 /* =====================================================
    VENDOR LOGIN (PASSWORD → OTP)
@@ -30,6 +31,20 @@ export const vendorLogin = async (req: Request, res: Response) => {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
+  }
+
+  if (user.vendorStatus !== "APPROVED") {
+    return res.status(403).json({
+      success: false,
+      message: "Vendor account not approved",
+    });
+  }
+
+  if (!user.isVerified) {
+    return res.status(403).json({
+      success: false,
+      message: "Account not verified",
+    });
   }
 
   const isMatch = await user.comparePassword(password);
@@ -80,10 +95,8 @@ export const resendVendorOtp = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, message: "Email required" });
 
   const user = await User.findOne({ email });
-  if (!user || user.role !== "vendor") {
-    return res
-      .status(404)
-      .json({ success: false, message: "Vendor not found" });
+  if (!user) {
+    return res.status(404).json({ success: false, message: "User not found" });
   }
 
   if (user.adminOtpSentAt) {
@@ -175,13 +188,17 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
     });
   }
 
-  const token = generateToken(user._id.toString(), user.role);
+  const token = generateToken(
+    user._id.toString(),
+    user.role,
+    `${VENDOR_SESSION_MINUTES}m`,
+  );
 
   res.cookie("auth-token", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: VENDOR_SESSION_MINUTES * 60 * 1000,
   });
 
   res.json({ success: true, message: "Login successful" });
@@ -193,6 +210,24 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
 
 export const getVendorProfile = async (req: AuthRequest, res: Response) => {
   res.json({ success: true, user: req.user });
+};
+
+/* =====================================================
+   VENDOR LOGOUT
+===================================================== */
+
+export const vendorLogout = async (req: Request, res: Response) => {
+  try {
+    res.clearCookie("auth-token", {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+    });
+    res.json({ success: true, message: "Logged out successfully" });
+  } catch (error) {
+    console.error("Vendor logout error:", error);
+    res.status(500).json({ success: false, message: "Logout failed" });
+  }
 };
 
 /* =====================================================
@@ -259,11 +294,15 @@ export const approveVendor = async (req: AuthRequest, res: Response) => {
 
   await vendor.save();
 
-  await sendEmail(
-    vendor.email,
-    "Vendor Application Approved",
-    "<h2>Your vendor account has been approved</h2>",
-  );
+  try {
+    await sendEmail(
+      vendor.email,
+      "Vendor Application Approved",
+      "<h2>Your vendor account has been approved</h2>",
+    );
+  } catch (err) {
+    console.error("Approve vendor email failed:", err);
+  }
 
   res.json({ success: true, message: "Vendor approved" });
 };
@@ -278,11 +317,34 @@ export const rejectVendor = async (req: AuthRequest, res: Response) => {
   vendor.vendorStatus = "REJECTED";
   await vendor.save();
 
-  await sendEmail(
-    vendor.email,
-    "Vendor Application Update",
-    `<p>${req.body.reason || "Please update your details"}</p>`,
-  );
+  try {
+    await sendEmail(
+      vendor.email,
+      "Vendor Application Update",
+      `<p>${req.body.reason || "Please update your details"}</p>`,
+    );
+  } catch (err) {
+    console.error("Reject vendor email failed:", err);
+  }
 
   res.json({ success: true, message: "Vendor rejected" });
+};
+
+/* =====================================================
+   LIST VENDORS (ADMIN)
+===================================================== */
+
+export const getPendingVendors = async (req: AuthRequest, res: Response) => {
+  const vendors = await User.find({ vendorStatus: "PENDING" }).select(
+    "name email vendorInfo createdAt role",
+  );
+  res.json({ success: true, vendors });
+};
+
+export const getApprovedVendors = async (req: AuthRequest, res: Response) => {
+  const vendors = await User.find({
+    vendorStatus: "APPROVED",
+    role: "vendor",
+  }).select("name email vendorInfo vendorApproval role");
+  res.json({ success: true, vendors });
 };

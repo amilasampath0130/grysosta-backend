@@ -1,17 +1,15 @@
+import "dotenv/config";
 import nodemailer from "nodemailer";
 
-export const sendEmail = async (to: string, subject: string, html: string) => {
+async function main() {
   const rawUser = process.env.EMAIL_USER || "";
   const rawPass = process.env.EMAIL_PASS || "";
-
-  // Trim accidental whitespace (e.g., spaced app passwords)
   const user = rawUser.trim();
   const pass = rawPass.replace(/\s+/g, "");
 
   if (!user || !pass) {
-    throw new Error(
-      "Email credentials missing: set EMAIL_USER and EMAIL_PASS in environment",
-    );
+    console.error("Missing EMAIL_USER or EMAIL_PASS env variables.");
+    process.exit(1);
   }
 
   const transporter = nodemailer.createTransport({
@@ -19,18 +17,13 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
     auth: { user, pass },
   });
 
-  // Optional verification to surface credential/config errors early
   try {
     await transporter.verify();
+    console.log("Email transport verified successfully for:", user);
   } catch (err) {
     console.error("Email transport verify failed:", err);
-    throw err;
+    process.exit(2);
   }
+}
 
-  await transporter.sendMail({
-    from: `"Admin Security" <${user}>`,
-    to,
-    subject,
-    html,
-  });
-};
+main();
