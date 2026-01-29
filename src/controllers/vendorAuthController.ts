@@ -27,16 +27,33 @@ export const vendorLogin = async (req: Request, res: Response) => {
   }
 
   const user = await User.findOne({ email });
-  if (!user || user.role !== "vendor") {
+  if (!user) {
     return res
       .status(401)
       .json({ success: false, message: "Invalid credentials" });
   }
 
-  if (user.vendorStatus !== "APPROVED") {
+  // Debug: log key user flags to help diagnose login issues
+  console.debug("vendorLogin: user found", {
+    email: user.email,
+    role: user.role,
+    vendorStatus: user.vendorStatus,
+    isVerified: user.isVerified,
+    hasPassword: !!user.password,
+  });
+
+  // Allow mobile users and vendors to start vendor onboarding (but not admins).
+  if (user.role === "admin") {
+    return res
+      .status(401)
+      .json({ success: false, message: "Invalid credentials" });
+  }
+
+  // Explicitly block rejected vendor applications
+  if (user.vendorStatus === "REJECTED") {
     return res.status(403).json({
       success: false,
-      message: "Vendor account not approved",
+      message: "Vendor account rejected",
     });
   }
 
@@ -49,9 +66,10 @@ export const vendorLogin = async (req: Request, res: Response) => {
 
   const isMatch = await user.comparePassword(password);
   if (!isMatch) {
+    console.debug("vendorLogin: password mismatch for", user.email);
     return res
       .status(401)
-      .json({ success: false, message: "Invalid credentials" });
+      .json({ success: false, message: "Invalid email or password" });
   }
 
   // ⏱ Cooldown
