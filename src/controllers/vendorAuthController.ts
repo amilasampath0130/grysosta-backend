@@ -272,17 +272,28 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
   try {
     if (!targetUser) {
       if (!email)
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "Email required for unauthenticated submission",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "Email required for unauthenticated submission",
+        });
       targetUser = await User.findOne({ email });
       if (!targetUser)
         return res
           .status(404)
           .json({ success: false, message: "User not found" });
+    }
+
+    if (targetUser.role === "admin") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Admins cannot submit vendor info" });
+    }
+
+    if (!targetUser.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Account not verified",
+      });
     }
 
     const vendorInfo = {

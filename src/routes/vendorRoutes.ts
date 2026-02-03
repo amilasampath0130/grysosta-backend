@@ -13,6 +13,7 @@ import {
   getApprovedVendors,
 } from "../controllers/vendorAuthController.js";
 import { authenticateToken } from "../middleware/auth.js";
+import { authorizeRoles } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
@@ -37,18 +38,38 @@ router.post("/logout", vendorLogout);
 router.get("/profile", authenticateToken, getVendorProfile);
 
 //== Submit Vendor Info ==
-router.post("/submit-info", authenticateToken, submitVendorInfo);
+router.post("/submit-info", submitVendorInfo);
 
 //== Admin: Get Pending Vendors ==
-router.get("/pending", authenticateToken, getPendingVendors);
+router.get(
+  "/pending",
+  authenticateToken,
+  authorizeRoles("admin"),
+  getPendingVendors,
+);
 
 //== Admin: Get Approved Vendors ==
-router.get("/approved", authenticateToken, getApprovedVendors);
+router.get(
+  "/approved",
+  authenticateToken,
+  authorizeRoles("admin"),
+  getApprovedVendors,
+);
 
 //== Admin: Approve Vendor ==
-router.post("/approve/:vendorId", authenticateToken, approveVendor);
+router.post(
+  "/approve/:vendorId",
+  authenticateToken,
+  authorizeRoles("admin"),
+  approveVendor,
+);
 
 //== Admin: Reject Vendor ==
-router.post("/reject/:vendorId", authenticateToken, rejectVendor);
+router.post(
+  "/reject/:vendorId",
+  authenticateToken,
+  authorizeRoles("admin"),
+  rejectVendor,
+);
 
 export default router;
