@@ -43,6 +43,7 @@ export interface IUser {
     approvedAt?: Date;
     approvedBy?: Types.ObjectId;
   };
+  vendorRejectionReason?: string;
 
   // Methods
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -132,6 +133,9 @@ const userSchema = new mongoose.Schema<IUser>(
         return this.role === "vendor" ? "NEW" : undefined;
       },
     },
+
+    // Optional admin-provided rejection reason to show to vendor
+    vendorRejectionReason: { type: String },
 
     vendorInfo: vendorInfoSchema,
     vendorApproval: vendorApprovalSchema,

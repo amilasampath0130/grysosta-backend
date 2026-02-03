@@ -33,14 +33,14 @@ export const vendorLogin = async (req: Request, res: Response) => {
       .json({ success: false, message: "Invalid credentials" });
   }
 
-  // Debug: log key user flags to help diagnose login issues
-  console.debug("vendorLogin: user found", {
-    email: user.email,
-    role: user.role,
-    vendorStatus: user.vendorStatus,
-    isVerified: user.isVerified,
-    hasPassword: !!user.password,
-  });
+  // // Debug: log key user flags to help diagnose login issues
+  // console.debug("vendorLogin: user found", {
+  //   email: user.email,
+  //   role: user.role,
+  //   vendorStatus: user.vendorStatus,
+  //   isVerified: user.isVerified,
+  //   hasPassword: !!user.password,
+  // });
 
   // Allow mobile users and vendors to start vendor onboarding (but not admins).
   if (user.role === "admin") {
@@ -54,6 +54,9 @@ export const vendorLogin = async (req: Request, res: Response) => {
     return res.status(403).json({
       success: false,
       message: "Vendor account rejected",
+      vendorStatus: "REJECTED",
+      canResubmit: true,
+      rejectionReason: user.vendorRejectionReason || null,
     });
   }
 
@@ -253,10 +256,8 @@ export const vendorLogout = async (req: Request, res: Response) => {
 ===================================================== */
 
 export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
-  const user = req.user;
-  if (!user)
-    return res.status(401).json({ success: false, message: "Unauthorized" });
-
+  // Allow submission either when authenticated (req.user) or when providing an email
+  const authUser = req.user as any | undefined;
   const {
     businessName,
     businessAddress,
@@ -264,20 +265,46 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
     firstName,
     middleName,
     lastName,
-  } = req.body;
+    email,
+  } = req.body as any;
 
-  const vendorInfo = {
-    businessName,
-    ownerName: `${firstName} ${middleName || ""} ${lastName}`.trim(),
-    phone: businessPhoneNumber,
-    address: businessAddress,
-  };
-
+  let targetUser = authUser;
   try {
+    if (!targetUser) {
+      if (!email)
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "Email required for unauthenticated submission",
+          });
+      targetUser = await User.findOne({ email });
+      if (!targetUser)
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+    }
+
+    const vendorInfo = {
+      businessName,
+      ownerName: `${firstName} ${middleName || ""} ${lastName}`.trim(),
+      phone: businessPhoneNumber,
+      address: businessAddress,
+    };
+
+    // Clear previous rejection reason when resubmitting
     await User.updateOne(
-      { _id: user._id },
-      { $set: { vendorInfo, vendorStatus: "PENDING" } },
+      { _id: targetUser._id },
+      {
+        $set: { vendorInfo, vendorStatus: "PENDING" },
+        $unset: { vendorRejectionReason: "" },
+      },
     );
+
+    res.json({
+      success: true,
+      message: "Vendor application submitted for review",
+    });
   } catch (err) {
     console.error("Submit vendor info error:", err);
     return res.status(500).json({
@@ -285,11 +312,6 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       message: "Failed to submit vendor information. Please try again.",
     });
   }
-
-  res.json({
-    success: true,
-    message: "Vendor application submitted for review",
-  });
 };
 
 /* =====================================================
@@ -332,14 +354,27 @@ export const rejectVendor = async (req: AuthRequest, res: Response) => {
       .status(404)
       .json({ success: false, message: "Vendor not found" });
 
+  const reason =
+    req.body.reason ||
+    "Please update your details and resubmit your documents.";
   vendor.vendorStatus = "REJECTED";
+  vendor.vendorRejectionReason = reason;
   await vendor.save();
 
   try {
+    const clientUrl =
+      process.env.CLIENT_URL || "https://your-frontend.example.com";
+    const onboardingLink = `${clientUrl.replace(/\/$/, "")}/vendor/onboarding`;
+    const reason =
+      req.body.reason ||
+      "Please update your details and resubmit your documents.";
+
     await sendEmail(
       vendor.email,
-      "Vendor Application Update",
-      `<p>${req.body.reason || "Please update your details"}</p>`,
+      "Vendor Application Rejected",
+      `<h2>Your vendor application was rejected</h2>
+       <p>Reason: ${reason}</p>
+       <p>Please update your information and resubmit your application by visiting <a href="${onboardingLink}">the onboarding page</a>.</p>`,
     );
   } catch (err) {
     console.error("Reject vendor email failed:", err);
