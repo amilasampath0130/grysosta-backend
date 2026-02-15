@@ -139,6 +139,72 @@ export const profile = async (req: AuthRequest, res: Response) => {
   });
 };
 
+// ================= UPDATE PROFILE =================
+export const updateProfile = async (req: AuthRequest, res: Response) => {
+  try {
+    const { name, username, mobileNumber } = req.body;
+    const userId = req.user?._id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized",
+      });
+    }
+
+    // Validate required fields
+    if (!name || !username) {
+      return res.status(400).json({
+        success: false,
+        message: "Name and username are required",
+      });
+    }
+
+    // Check if username is already taken by another user
+    const existingUser = await User.findOne({
+      username,
+      _id: { $ne: userId },
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: "Username is already taken",
+      });
+    }
+
+    // Update user profile
+    const user = await User.findByIdAndUpdate(
+      userId,
+      {
+        name: name.trim(),
+        username: username.trim(),
+        mobileNumber: mobileNumber?.trim() || "",
+      },
+      { new: true, runValidators: true },
+    ).select("-password -emailOtp -emailOtpExpires -emailOtpSentAt");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      user,
+    });
+  } catch (error) {
+    console.error("Update profile error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
 // ================= VERIFY REGISTRATION OTP =================
 export const verifyOtp = async (req: Request, res: Response) => {
   try {

@@ -3,6 +3,7 @@ import {
   register,
   login,
   profile,
+  updateProfile,
   verifyOtp,
   resendOtp,
 } from "../controllers/authController.js";
@@ -24,6 +25,7 @@ router.post("/resend-otp", resendOtp);
 
 // PROTECTED
 router.get("/profile", authenticateToken, profile);
+router.put("/update-profile", authenticateToken, updateProfile);
 
 // Admin route only
 // router.post("/admin/login", adminLogin);
