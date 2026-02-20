@@ -7,6 +7,7 @@ import { connectDB } from "./lib/db.js";
 import userRoutes from "./routes/userRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import VendorRoutes from "./routes/vendorRoutes.js";
+import advertisementRoutes from "./routes/advertisementRoutes.js";
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 5000;
 
@@ -26,6 +27,7 @@ app.use(
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/vendor", VendorRoutes);
+app.use("/api/advertisements", advertisementRoutes);
 
 //for admin routes
 app.use("/api/admin", adminRoutes);

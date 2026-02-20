@@ -230,7 +230,21 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
 ===================================================== */
 
 export const getVendorProfile = async (req: AuthRequest, res: Response) => {
-  res.json({ success: true, user: req.user });
+  const currentUser = req.user;
+  const normalizedStatus =
+    currentUser?.vendorStatus || (currentUser?.role === "vendor" ? "APPROVED" : "NEW");
+  const baseUser =
+    currentUser && typeof (currentUser as any).toObject === "function"
+      ? (currentUser as any).toObject()
+      : currentUser;
+
+  res.json({
+    success: true,
+    user: {
+      ...baseUser,
+      vendorStatus: normalizedStatus,
+    },
+  });
 };
 
 /* =====================================================

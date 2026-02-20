@@ -1,0 +1,55 @@
+
+> backend@1.0.0 dev
+> nodemon --watch src --exec tsx src/index.ts
+
+[33m[nodemon] 3.1.11[39m
+[33m[nodemon] to restart at any time, enter `rs`[39m
+[33m[nodemon] watching path(s): src\**\*[39m
+[33m[nodemon] watching extensions: ts,json[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+ Server running on port 5000
+Database Connected: ac-ddxvko4-shard-00-00.dncb8nr.mongodb.net
+ Database Name: Grysosta_db
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+ Server running on port 5000
+Database Connected: ac-ddxvko4-shard-00-00.dncb8nr.mongodb.net
+ Database Name: Grysosta_db
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+ Server running on port 5000
+Database Connected: ac-ddxvko4-shard-00-00.dncb8nr.mongodb.net
+ Database Name: Grysosta_db
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+ Server running on port 5000
+Database Connected: ac-ddxvko4-shard-00-00.dncb8nr.mongodb.net
+ Database Name: Grysosta_db
+MongoDB disconnected
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+ Server running on port 5000
+MongoDB disconnected
+ MongoDB connection error: querySrv ENOTFOUND _mongodb._tcp.grysosta01.dncb8nr.mongodb.net
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `tsx src/index.ts`[39m
+ Server running on port 5000
+MongoDB disconnected
+ MongoDB connection error: querySrv ENOTFOUND _mongodb._tcp.grysosta01.dncb8nr.mongodb.net
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m
