@@ -11,9 +11,12 @@ import {
   rejectVendor,
   getPendingVendors,
   getApprovedVendors,
+  getVendorApplicationById,
 } from "../controllers/vendorAuthController.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { authorizeRoles } from "../middleware/authMiddleware.js";
+import { uploadVendorDocuments } from "../middleware/upload.js";
+import { optionalAuthenticateToken } from "../middleware/optionalAuth.js";
 
 const router = express.Router();
 
@@ -38,7 +41,12 @@ router.post("/logout", vendorLogout);
 router.get("/profile", authenticateToken, getVendorProfile);
 
 //== Submit Vendor Info ==
-router.post("/submit-info", submitVendorInfo);
+router.post(
+  "/submit-info",
+  optionalAuthenticateToken,
+  uploadVendorDocuments,
+  submitVendorInfo,
+);
 
 //== Admin: Get Pending Vendors ==
 router.get(
@@ -54,6 +62,14 @@ router.get(
   authenticateToken,
   authorizeRoles("admin"),
   getApprovedVendors,
+);
+
+//== Admin: Get Vendor Application Details ==
+router.get(
+  "/application/:vendorId",
+  authenticateToken,
+  authorizeRoles("admin"),
+  getVendorApplicationById,
 );
 
 //== Admin: Approve Vendor ==

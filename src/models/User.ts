@@ -39,6 +39,40 @@ export interface IUser {
     phone: string;
     address: string;
   };
+
+  vendorApplication?: {
+    personal?: {
+      firstName?: string;
+      middleName?: string;
+      lastName?: string;
+      address?: string;
+      city?: string;
+      state?: string;
+      zipCode?: string;
+      email?: string;
+      phoneNumber?: string;
+    };
+    business?: {
+      businessName?: string;
+      businessType?: string;
+      businessCategory?: string;
+      businessAddress?: string;
+      businessPhoneNumber?: string;
+      typeofoffering?: string;
+      website?: string;
+      yearEstablished?: string;
+      taxId?: string;
+    };
+    documents?: {
+      userIdImageUrl?: string;
+      userIdImagePublicId?: string;
+      businessRegImageUrl?: string;
+      businessRegImagePublicId?: string;
+    };
+    pdfUrl?: string;
+    pdfPublicId?: string;
+    submittedAt?: Date;
+  };
   vendorApproval?: {
     approvedAt?: Date;
     approvedBy?: Types.ObjectId;
@@ -72,6 +106,43 @@ const vendorApprovalSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
     },
+  },
+  { _id: false },
+);
+
+const vendorApplicationSchema = new mongoose.Schema(
+  {
+    personal: {
+      firstName: { type: String },
+      middleName: { type: String },
+      lastName: { type: String },
+      address: { type: String },
+      city: { type: String },
+      state: { type: String },
+      zipCode: { type: String },
+      email: { type: String },
+      phoneNumber: { type: String },
+    },
+    business: {
+      businessName: { type: String },
+      businessType: { type: String },
+      businessCategory: { type: String },
+      businessAddress: { type: String },
+      businessPhoneNumber: { type: String },
+      typeofoffering: { type: String },
+      website: { type: String },
+      yearEstablished: { type: String },
+      taxId: { type: String },
+    },
+    documents: {
+      userIdImageUrl: { type: String },
+      userIdImagePublicId: { type: String },
+      businessRegImageUrl: { type: String },
+      businessRegImagePublicId: { type: String },
+    },
+    pdfUrl: { type: String },
+    pdfPublicId: { type: String },
+    submittedAt: { type: Date },
   },
   { _id: false },
 );
@@ -139,6 +210,7 @@ const userSchema = new mongoose.Schema<IUser>(
 
     vendorInfo: vendorInfoSchema,
     vendorApproval: vendorApprovalSchema,
+    vendorApplication: vendorApplicationSchema,
   },
   {
     timestamps: true,

@@ -4,6 +4,9 @@ import { generateOtp } from "../utils/generateOtp.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { AuthRequest, generateToken } from "./authController.js";
 import bcrypt from "bcryptjs";
+import {
+  uploadImageBufferToCloudinary,
+} from "../lib/cloudinary.js";
 
 /* =====================================================
    CONFIG
@@ -273,13 +276,26 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
   // Allow submission either when authenticated (req.user) or when providing an email
   const authUser = req.user as any | undefined;
   const {
-    businessName,
-    businessAddress,
-    businessPhoneNumber,
+    // Personal
     firstName,
     middleName,
     lastName,
+    address,
+    city,
+    state,
+    zipCode,
     email,
+    phoneNumber,
+    // Business
+    businessName,
+    businessType,
+    businessCategory,
+    businessAddress,
+    businessPhoneNumber,
+    typeofoffering,
+    website,
+    yearEstablished,
+    taxId,
   } = req.body as any;
 
   let targetUser = authUser;
@@ -312,16 +328,96 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
 
     const vendorInfo = {
       businessName,
-      ownerName: `${firstName} ${middleName || ""} ${lastName}`.trim(),
-      phone: businessPhoneNumber,
-      address: businessAddress,
+      ownerName: `${firstName || ""} ${middleName || ""} ${lastName || ""}`
+        .replace(/\s+/g, " ")
+        .trim(),
+      phone: businessPhoneNumber || phoneNumber,
+      address: businessAddress || address,
     };
+
+    const files = req.files as
+      | {
+          [fieldname: string]: Express.Multer.File[];
+        }
+      | undefined;
+
+    const userIdImageFile = files?.userIdImage?.[0];
+    const businessRegImageFile = files?.businessRegImage?.[0];
+
+    // Basic validation (matches vendor dashboard form expectations)
+    if (!firstName || !lastName || !email) {
+      return res.status(400).json({
+        success: false,
+        message: "firstName, lastName, and email are required",
+      });
+    }
+
+    if (!businessName || !businessType || !businessCategory || !businessAddress) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "businessName, businessType, businessCategory, and businessAddress are required",
+      });
+    }
+
+    if (!userIdImageFile || !businessRegImageFile) {
+      return res.status(400).json({
+        success: false,
+        message: "userIdImage and businessRegImage are required",
+      });
+    }
+
+    const folderBase = `grysosta/vendor-applications/${targetUser._id.toString()}`;
+
+    // Upload images first (so admins can also inspect images if needed)
+    const [userIdUpload, businessRegUpload] = await Promise.all([
+      uploadImageBufferToCloudinary(userIdImageFile.buffer, `${folderBase}/documents`),
+      uploadImageBufferToCloudinary(
+        businessRegImageFile.buffer,
+        `${folderBase}/documents`,
+      ),
+    ]);
+
 
     // Clear previous rejection reason when resubmitting
     await User.updateOne(
       { _id: targetUser._id },
       {
-        $set: { vendorInfo, vendorStatus: "PENDING" },
+        $set: {
+          vendorInfo,
+          vendorStatus: "PENDING",
+          vendorApplication: {
+            personal: {
+              firstName,
+              middleName,
+              lastName,
+              address,
+              city,
+              state,
+              zipCode,
+              email,
+              phoneNumber,
+            },
+            business: {
+              businessName,
+              businessType,
+              businessCategory,
+              businessAddress,
+              businessPhoneNumber,
+              typeofoffering,
+              website,
+              yearEstablished,
+              taxId,
+            },
+            documents: {
+              userIdImageUrl: userIdUpload.secure_url,
+              userIdImagePublicId: userIdUpload.public_id,
+              businessRegImageUrl: businessRegUpload.secure_url,
+              businessRegImagePublicId: businessRegUpload.public_id,
+            },
+            submittedAt: new Date(),
+          },
+        },
         $unset: { vendorRejectionReason: "" },
       },
     );
@@ -414,7 +510,7 @@ export const rejectVendor = async (req: AuthRequest, res: Response) => {
 
 export const getPendingVendors = async (req: AuthRequest, res: Response) => {
   const vendors = await User.find({ vendorStatus: "PENDING" }).select(
-    "name email vendorInfo createdAt role",
+    "name email vendorInfo vendorApplication createdAt role",
   );
   res.json({ success: true, vendors });
 };
@@ -423,6 +519,38 @@ export const getApprovedVendors = async (req: AuthRequest, res: Response) => {
   const vendors = await User.find({
     vendorStatus: "APPROVED",
     role: "vendor",
-  }).select("name email vendorInfo vendorApproval role");
+  }).select("name email vendorInfo vendorApplication vendorApproval role");
   res.json({ success: true, vendors });
+};
+
+/* =====================================================
+   GET SINGLE VENDOR APPLICATION (ADMIN)
+===================================================== */
+
+export const getVendorApplicationById = async (req: AuthRequest, res: Response) => {
+  try {
+    const vendorId = String(req.params.vendorId || "").trim();
+    if (!vendorId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "vendorId is required" });
+    }
+
+    const vendor = await User.findById(vendorId).select(
+      "name username email role vendorStatus vendorRejectionReason vendorInfo vendorApplication createdAt",
+    );
+
+    if (!vendor) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Vendor not found" });
+    }
+
+    return res.json({ success: true, vendor });
+  } catch (error) {
+    console.error("Get vendor application error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch vendor application" });
+  }
 };
