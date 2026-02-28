@@ -8,6 +8,22 @@ import {
 import { sendEmail } from "../utils/sendEmail.js";
 import User from "../models/User.js";
 
+const parseDateOrUndefined = (value: unknown): Date | undefined => {
+  if (value === undefined || value === null) return undefined;
+  const str = String(value).trim();
+  if (!str) return undefined;
+  const date = new Date(str);
+  return isNaN(date.getTime()) ? undefined : date;
+};
+
+const validateStartEndDates = (startDate?: Date, endDate?: Date): string | null => {
+  if (!startDate || !endDate) return "startDate and endDate are required";
+  if (endDate.getTime() < startDate.getTime()) {
+    return "endDate must be the same as or after startDate";
+  }
+  return null;
+};
+
 export const createAdvertisement = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
@@ -23,10 +39,12 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    const { title, content, advertisementType } = req.body as {
+    const { title, content, advertisementType, startDate, endDate } = req.body as {
       title?: string;
       content?: string;
       advertisementType?: "banner" | "sidebar" | "popup";
+      startDate?: string;
+      endDate?: string;
     };
 
     if (!title || !content || !advertisementType) {
@@ -34,6 +52,13 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
         success: false,
         message: "title, content, and advertisementType are required",
       });
+    }
+
+    const parsedStart = parseDateOrUndefined(startDate);
+    const parsedEnd = parseDateOrUndefined(endDate);
+    const dateError = validateStartEndDates(parsedStart, parsedEnd);
+    if (dateError) {
+      return res.status(400).json({ success: false, message: dateError });
     }
 
     if (!req.file) {
@@ -49,6 +74,8 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
       title: title.trim(),
       content: content.trim(),
       advertisementType,
+      startDate: parsedStart!,
+      endDate: parsedEnd!,
       imageUrl: uploaded.secure_url,
       imagePublicId: uploaded.public_id,
       status: "PENDING",
@@ -78,7 +105,7 @@ export const listMyAdvertisements = async (req: AuthRequest, res: Response) => {
     const advertisements = await Advertisement.find({ vendor: req.user._id })
       .sort({ createdAt: -1 })
       .select(
-        "title content advertisementType imageUrl status reviewNote createdAt updatedAt approvedAt",
+        "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt",
       );
 
     return res.json({ success: true, advertisements });
@@ -87,6 +114,135 @@ export const listMyAdvertisements = async (req: AuthRequest, res: Response) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch advertisements" });
+  }
+};
+
+export const getMyAdvertisementById = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized request" });
+    }
+
+    const advertisement = await Advertisement.findOne({
+      _id: req.params.advertisementId,
+      vendor: req.user._id,
+    }).select(
+      "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt",
+    );
+
+    if (!advertisement) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Advertisement not found" });
+    }
+
+    return res.json({ success: true, advertisement });
+  } catch (error) {
+    console.error("Get my advertisement error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch advertisement" });
+  }
+};
+
+export const updateAdvertisement = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized request" });
+    }
+
+    if (req.user.role !== "vendor" || req.user.vendorStatus !== "APPROVED") {
+      return res.status(403).json({
+        success: false,
+        message: "Only approved vendors can edit advertisements",
+      });
+    }
+
+    const advertisement = await Advertisement.findOne({
+      _id: req.params.advertisementId,
+      vendor: req.user._id,
+    });
+
+    if (!advertisement) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Advertisement not found" });
+    }
+
+    const { title, content, advertisementType, startDate, endDate } = req.body as {
+      title?: string;
+      content?: string;
+      advertisementType?: "banner" | "sidebar" | "popup";
+      startDate?: string;
+      endDate?: string;
+    };
+
+    if (title !== undefined) advertisement.title = String(title).trim();
+    if (content !== undefined) advertisement.content = String(content).trim();
+    if (advertisementType !== undefined)
+      advertisement.advertisementType = advertisementType;
+
+    const nextStart =
+      startDate !== undefined ? parseDateOrUndefined(startDate) : advertisement.startDate;
+    const nextEnd =
+      endDate !== undefined ? parseDateOrUndefined(endDate) : advertisement.endDate;
+
+    const dateError = validateStartEndDates(nextStart, nextEnd);
+    if (dateError) {
+      return res.status(400).json({ success: false, message: dateError });
+    }
+
+    advertisement.startDate = nextStart!;
+    advertisement.endDate = nextEnd!;
+
+    if (!advertisement.title || !advertisement.content || !advertisement.advertisementType) {
+      return res.status(400).json({
+        success: false,
+        message: "title, content, and advertisementType are required",
+      });
+    }
+
+    if (req.file) {
+      const uploaded = await uploadImageBufferToCloudinary(req.file.buffer);
+      const oldPublicId = advertisement.imagePublicId;
+      advertisement.imageUrl = uploaded.secure_url;
+      advertisement.imagePublicId = uploaded.public_id;
+
+      try {
+        if (oldPublicId) await deleteCloudinaryImage(oldPublicId);
+      } catch (cloudinaryError) {
+        console.error("Failed to delete old Cloudinary image:", cloudinaryError);
+      }
+    }
+
+    // Any edit after review should go back to pending for re-review
+    if (advertisement.status !== "PENDING") {
+      advertisement.status = "PENDING";
+      advertisement.reviewNote = undefined;
+      advertisement.reviewedBy = undefined;
+      advertisement.reviewedAt = undefined;
+      advertisement.approvedAt = undefined;
+      advertisement.stoppedAt = undefined;
+      advertisement.stoppedBy = undefined;
+      advertisement.stopNote = undefined;
+    }
+
+    await advertisement.save();
+
+    return res.json({
+      success: true,
+      message: "Advertisement updated and submitted for approval",
+      advertisement,
+    });
+  } catch (error) {
+    console.error("Update advertisement error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to update advertisement" });
   }
 };
 
@@ -99,7 +255,7 @@ export const listPendingAdvertisements = async (
       .sort({ createdAt: -1 })
       .populate("vendor", "name email vendorInfo")
       .select(
-        "title content advertisementType imageUrl status createdAt vendor reviewNote",
+        "title content advertisementType startDate endDate imageUrl status createdAt vendor reviewNote",
       );
 
     return res.json({ success: true, advertisements });
@@ -109,6 +265,134 @@ export const listPendingAdvertisements = async (
       success: false,
       message: "Failed to fetch pending advertisements",
     });
+  }
+};
+
+export const listAdvertisementsByVendor = async (
+  req: AuthRequest,
+  res: Response,
+) => {
+  try {
+    const vendorId = String(req.params.vendorId || "").trim();
+    if (!vendorId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "vendorId is required" });
+    }
+
+    const advertisements = await Advertisement.find({ vendor: vendorId })
+      .sort({ createdAt: -1 })
+      .select(
+        "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt",
+      );
+
+    return res.json({ success: true, advertisements });
+  } catch (error) {
+    console.error("List advertisements by vendor error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch vendor advertisements",
+    });
+  }
+};
+
+export const stopAdvertisement = async (req: AuthRequest, res: Response) => {
+  try {
+    if (!req.user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized request" });
+    }
+
+    const advertisement = await Advertisement.findById(req.params.advertisementId);
+    if (!advertisement) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Advertisement not found" });
+    }
+
+    const note = String(req.body?.reason || req.body?.note || "").trim();
+
+    advertisement.status = "STOPPED";
+    advertisement.stoppedAt = new Date();
+    advertisement.stoppedBy = req.user._id;
+    advertisement.stopNote = note || "Stopped by admin";
+    advertisement.reviewedAt = new Date();
+    advertisement.reviewedBy = req.user._id;
+
+    await advertisement.save();
+
+    const vendor = await User.findById(advertisement.vendor).select("email");
+    if (vendor?.email) {
+      try {
+        await sendEmail(
+          vendor.email,
+          "Advertisement Stopped",
+          `<h2>Your advertisement has been stopped</h2>
+           <p>Title: <strong>${advertisement.title}</strong></p>
+           <p>Message: ${advertisement.stopNote}</p>`,
+        );
+      } catch (emailError) {
+        console.error("Stop advertisement email failed:", emailError);
+      }
+    }
+
+    return res.json({ success: true, message: "Advertisement stopped" });
+  } catch (error) {
+    console.error("Stop advertisement error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to stop advertisement" });
+  }
+};
+
+export const informAdvertisementVendor = async (
+  req: AuthRequest,
+  res: Response,
+) => {
+  try {
+    if (!req.user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized request" });
+    }
+
+    const message = String(req.body?.message || "").trim();
+    if (!message) {
+      return res
+        .status(400)
+        .json({ success: false, message: "message is required" });
+    }
+
+    const advertisement = await Advertisement.findById(req.params.advertisementId);
+    if (!advertisement) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Advertisement not found" });
+    }
+
+    const vendor = await User.findById(advertisement.vendor).select("email name");
+    if (!vendor?.email) {
+      return res.status(400).json({
+        success: false,
+        message: "Vendor email not found for this advertisement",
+      });
+    }
+
+    await sendEmail(
+      vendor.email,
+      "Advertisement Information",
+      `<h2>Advertisement Update</h2>
+       <p>Title: <strong>${advertisement.title}</strong></p>
+       <p>${message}</p>`,
+    );
+
+    return res.json({ success: true, message: "Vendor informed" });
+  } catch (error) {
+    console.error("Inform advertisement vendor error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to inform vendor" });
   }
 };
 

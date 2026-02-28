@@ -6,13 +6,18 @@ export interface IAdvertisement {
   title: string;
   content: string;
   advertisementType: "banner" | "sidebar" | "popup";
+  startDate?: Date;
+  endDate?: Date;
   imageUrl: string;
   imagePublicId: string;
-  status: "PENDING" | "APPROVED" | "REJECTED";
+  status: "PENDING" | "APPROVED" | "REJECTED" | "STOPPED";
   reviewNote?: string;
   reviewedBy?: Types.ObjectId;
   reviewedAt?: Date;
   approvedAt?: Date;
+  stoppedAt?: Date;
+  stoppedBy?: Types.ObjectId;
+  stopNote?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -32,11 +37,13 @@ const advertisementSchema = new mongoose.Schema<IAdvertisement>(
       enum: ["banner", "sidebar", "popup"],
       required: true,
     },
+    startDate: { type: Date },
+    endDate: { type: Date },
     imageUrl: { type: String, required: true },
     imagePublicId: { type: String, required: true },
     status: {
       type: String,
-      enum: ["PENDING", "APPROVED", "REJECTED"],
+      enum: ["PENDING", "APPROVED", "REJECTED", "STOPPED"],
       default: "PENDING",
       index: true,
     },
@@ -44,6 +51,9 @@ const advertisementSchema = new mongoose.Schema<IAdvertisement>(
     reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     reviewedAt: { type: Date },
     approvedAt: { type: Date },
+    stoppedAt: { type: Date },
+    stoppedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    stopNote: { type: String },
   },
   { timestamps: true },
 );

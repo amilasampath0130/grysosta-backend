@@ -6,27 +6,48 @@ import {
   approveAdvertisement,
   createAdvertisement,
   deleteAdvertisement,
+  getMyAdvertisementById,
+  informAdvertisementVendor,
   listMyAdvertisements,
+  listAdvertisementsByVendor,
   listPendingAdvertisements,
   rejectAdvertisement,
   resubmitRejectedAdvertisement,
+  stopAdvertisement,
+  updateAdvertisement,
 } from "../controllers/advertisementController.js";
 
 const router = express.Router();
 
 router.post("/", authenticateToken, authorizeRoles("vendor"), uploadAdvertisementImage, createAdvertisement);
 router.get("/me", authenticateToken, authorizeRoles("vendor"), listMyAdvertisements);
+
+router.get(
+  "/by-vendor/:vendorId",
+  authenticateToken,
+  authorizeRoles("admin"),
+  listAdvertisementsByVendor,
+);
+
+router.post(
+  "/stop/:advertisementId",
+  authenticateToken,
+  authorizeRoles("admin"),
+  stopAdvertisement,
+);
+
+router.post(
+  "/inform/:advertisementId",
+  authenticateToken,
+  authorizeRoles("admin"),
+  informAdvertisementVendor,
+);
+
 router.post(
   "/resubmit/:advertisementId",
   authenticateToken,
   authorizeRoles("vendor"),
   resubmitRejectedAdvertisement,
-);
-router.delete(
-  "/:advertisementId",
-  authenticateToken,
-  authorizeRoles("vendor", "admin"),
-  deleteAdvertisement,
 );
 
 router.get(
@@ -46,6 +67,28 @@ router.post(
   authenticateToken,
   authorizeRoles("admin"),
   rejectAdvertisement,
+);
+
+router.get(
+  "/:advertisementId",
+  authenticateToken,
+  authorizeRoles("vendor"),
+  getMyAdvertisementById,
+);
+
+router.patch(
+  "/:advertisementId",
+  authenticateToken,
+  authorizeRoles("vendor"),
+  uploadAdvertisementImage,
+  updateAdvertisement,
+);
+
+router.delete(
+  "/:advertisementId",
+  authenticateToken,
+  authorizeRoles("vendor", "admin"),
+  deleteAdvertisement,
 );
 
 export default router;
