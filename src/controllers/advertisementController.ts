@@ -39,6 +39,26 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    // Enforce: only one pending advertisement at a time.
+    // Vendors should pay / wait for approval instead of creating another.
+    const existingPending = await Advertisement.findOne({
+      vendor: req.user._id,
+      status: "PENDING",
+    })
+      .sort({ createdAt: -1 })
+      .select("_id isPaid");
+
+    if (existingPending) {
+      return res.status(409).json({
+        success: false,
+        message:
+          existingPending.isPaid === false
+            ? "You already have a pending advertisement. Complete payment to submit it for admin approval."
+            : "You already have a pending advertisement awaiting admin approval.",
+        advertisement: existingPending,
+      });
+    }
+
     const { title, content, advertisementType, startDate, endDate } = req.body as {
       title?: string;
       content?: string;
@@ -78,12 +98,21 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
       endDate: parsedEnd!,
       imageUrl: uploaded.secure_url,
       imagePublicId: uploaded.public_id,
+      isPaid: false,
+      paidAt: undefined,
+      paidFrom: undefined,
+      paidThrough: undefined,
+      pendingPaymentCoverageStart: undefined,
+      pendingPaymentCoverageEnd: undefined,
+      stripeCheckoutSessionId: undefined,
+      stripePaymentIntentId: undefined,
       status: "PENDING",
     });
 
     return res.status(201).json({
       success: true,
-      message: "Advertisement submitted for approval",
+      message:
+        "Advertisement created. Complete payment to submit it for admin approval.",
       advertisement,
     });
   } catch (error) {
@@ -105,7 +134,7 @@ export const listMyAdvertisements = async (req: AuthRequest, res: Response) => {
     const advertisements = await Advertisement.find({ vendor: req.user._id })
       .sort({ createdAt: -1 })
       .select(
-        "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt",
+        "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt isPaid paidAt paidFrom paidThrough paymentAmountCents paymentCurrency",
       );
 
     return res.json({ success: true, advertisements });
@@ -129,7 +158,7 @@ export const getMyAdvertisementById = async (req: AuthRequest, res: Response) =>
       _id: req.params.advertisementId,
       vendor: req.user._id,
     }).select(
-      "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt",
+      "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt isPaid paidAt paidFrom paidThrough paymentAmountCents paymentCurrency",
     );
 
     if (!advertisement) {
@@ -173,6 +202,18 @@ export const updateAdvertisement = async (req: AuthRequest, res: Response) => {
         .json({ success: false, message: "Advertisement not found" });
     }
 
+    // If this advertisement was paid using older records (isPaid=true but no coverage dates),
+    // assume the paid coverage was for the existing schedule at the time.
+    if (
+      advertisement.isPaid === true &&
+      !advertisement.paidThrough &&
+      advertisement.startDate &&
+      advertisement.endDate
+    ) {
+      advertisement.paidFrom = advertisement.startDate;
+      advertisement.paidThrough = advertisement.endDate;
+    }
+
     const { title, content, advertisementType, startDate, endDate } = req.body as {
       title?: string;
       content?: string;
@@ -186,8 +227,12 @@ export const updateAdvertisement = async (req: AuthRequest, res: Response) => {
     if (advertisementType !== undefined)
       advertisement.advertisementType = advertisementType;
 
+    const previousStartDate = advertisement.startDate;
+
     const nextStart =
-      startDate !== undefined ? parseDateOrUndefined(startDate) : advertisement.startDate;
+      startDate !== undefined
+        ? parseDateOrUndefined(startDate)
+        : advertisement.startDate;
     const nextEnd =
       endDate !== undefined ? parseDateOrUndefined(endDate) : advertisement.endDate;
 
@@ -198,6 +243,28 @@ export const updateAdvertisement = async (req: AuthRequest, res: Response) => {
 
     advertisement.startDate = nextStart!;
     advertisement.endDate = nextEnd!;
+
+    // Payment rules:
+    // - If the schedule changes, the vendor may need to pay again.
+    // - Extending the end date beyond the previously paid coverage requires another payment.
+    // - If start date changes on a previously paid ad, we reset the paid coverage and require payment again.
+    const startDateChanged =
+      Boolean(previousStartDate && advertisement.startDate) &&
+      previousStartDate!.getTime() !== advertisement.startDate!.getTime();
+
+    if (
+      startDateChanged &&
+      (advertisement.paidFrom || advertisement.paidThrough || advertisement.isPaid)
+    ) {
+      advertisement.isPaid = false;
+      advertisement.paidAt = undefined;
+      advertisement.paidFrom = undefined;
+      advertisement.paidThrough = undefined;
+      advertisement.pendingPaymentCoverageStart = undefined;
+      advertisement.pendingPaymentCoverageEnd = undefined;
+    } else if (advertisement.paidThrough && advertisement.endDate) {
+      advertisement.isPaid = advertisement.endDate.getTime() <= advertisement.paidThrough.getTime();
+    }
 
     if (!advertisement.title || !advertisement.content || !advertisement.advertisementType) {
       return res.status(400).json({
@@ -251,11 +318,14 @@ export const listPendingAdvertisements = async (
   res: Response,
 ) => {
   try {
-    const advertisements = await Advertisement.find({ status: "PENDING" })
+    const advertisements = await Advertisement.find({
+      status: "PENDING",
+      $or: [{ isPaid: true }, { isPaid: { $exists: false } }],
+    })
       .sort({ createdAt: -1 })
       .populate("vendor", "name email vendorInfo")
       .select(
-        "title content advertisementType startDate endDate imageUrl status createdAt vendor reviewNote",
+        "title content advertisementType startDate endDate imageUrl status createdAt vendor reviewNote isPaid paidAt paymentAmountCents paymentCurrency",
       );
 
     return res.json({ success: true, advertisements });
@@ -280,10 +350,13 @@ export const listAdvertisementsByVendor = async (
         .json({ success: false, message: "vendorId is required" });
     }
 
-    const advertisements = await Advertisement.find({ vendor: vendorId })
+    const advertisements = await Advertisement.find({
+      vendor: vendorId,
+      $or: [{ isPaid: true }, { isPaid: { $exists: false } }],
+    })
       .sort({ createdAt: -1 })
       .select(
-        "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt",
+        "title content advertisementType startDate endDate imageUrl status reviewNote stopNote createdAt updatedAt approvedAt isPaid paidAt paidFrom paidThrough paymentAmountCents paymentCurrency",
       );
 
     return res.json({ success: true, advertisements });

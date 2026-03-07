@@ -8,10 +8,16 @@ import userRoutes from "./routes/userRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import VendorRoutes from "./routes/vendorRoutes.js";
 import advertisementRoutes from "./routes/advertisementRoutes.js";
+import paymentRoutes from "./routes/payment.js";
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 5000;
 
-app.use(express.json());
+// Stripe webhooks require the raw body for signature verification.
+// We skip JSON parsing for that one endpoint and let the payment router attach `express.raw()`.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.originalUrl.startsWith("/api/payment/webhook")) return next();
+  return express.json()(req, res, next);
+});
 app.use(cookieParser());
 app.use(
   cors({
@@ -28,7 +34,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/vendor", VendorRoutes);
 app.use("/api/advertisements", advertisementRoutes);
-
+app.use("/api/payment", paymentRoutes);
 //for admin routes
 app.use("/api/admin", adminRoutes);
 app.get("/api/health", (req: Request, res: Response) => {

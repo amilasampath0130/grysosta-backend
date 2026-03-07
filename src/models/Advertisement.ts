@@ -10,6 +10,16 @@ export interface IAdvertisement {
   endDate?: Date;
   imageUrl: string;
   imagePublicId: string;
+  isPaid: boolean;
+  paidAt?: Date;
+  paidFrom?: Date;
+  paidThrough?: Date;
+  pendingPaymentCoverageStart?: Date;
+  pendingPaymentCoverageEnd?: Date;
+  stripeCheckoutSessionId?: string;
+  stripePaymentIntentId?: string;
+  paymentAmountCents?: number;
+  paymentCurrency?: string;
   status: "PENDING" | "APPROVED" | "REJECTED" | "STOPPED";
   reviewNote?: string;
   reviewedBy?: Types.ObjectId;
@@ -41,6 +51,16 @@ const advertisementSchema = new mongoose.Schema<IAdvertisement>(
     endDate: { type: Date },
     imageUrl: { type: String, required: true },
     imagePublicId: { type: String, required: true },
+    isPaid: { type: Boolean, default: false, index: true },
+    paidAt: { type: Date },
+    paidFrom: { type: Date },
+    paidThrough: { type: Date },
+    pendingPaymentCoverageStart: { type: Date },
+    pendingPaymentCoverageEnd: { type: Date },
+    stripeCheckoutSessionId: { type: String, index: true },
+    stripePaymentIntentId: { type: String, index: true },
+    paymentAmountCents: { type: Number },
+    paymentCurrency: { type: String },
     status: {
       type: String,
       enum: ["PENDING", "APPROVED", "REJECTED", "STOPPED"],
