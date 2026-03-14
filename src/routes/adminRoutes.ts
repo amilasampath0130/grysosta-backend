@@ -1,6 +1,7 @@
 import express from "express";
 import { authenticateToken } from "../middleware/auth.js";
 import { authorizeRoles } from "../middleware/authMiddleware.js";
+import { getAdminDashboardStats } from "../controllers/adminDashboardController.js";
 import {
   adminLogin,
   getAdminProfile,
@@ -14,6 +15,13 @@ import {
 } from "../controllers/adminAuthController.js";
 
 const router = express.Router();
+
+router.get(
+  "/dashboard-stats",
+  authenticateToken,
+  authorizeRoles("admin"),
+  getAdminDashboardStats,
+);
 
 router.get("/users", authenticateToken, authorizeRoles("admin"), getAllUsers);
 router.delete(
