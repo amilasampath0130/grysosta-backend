@@ -79,6 +79,17 @@ export interface IUser {
   };
   vendorRejectionReason?: string;
 
+  // Vendor billing / subscription
+  vendorSubscription?: {
+    planKey?: "bronze" | "silver" | "gold";
+    status?: string;
+    currentPeriodEnd?: Date;
+    cancelAtPeriodEnd?: boolean;
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
+    stripePriceId?: string;
+  };
+
   // Methods
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
@@ -94,6 +105,8 @@ const vendorInfoSchema = new mongoose.Schema(
     ownerName: { type: String },
     phone: { type: String },
     address: { type: String },
+    logoUrl: { type: String },
+    logoPublicId: { type: String },
   },
   { _id: false },
 );
@@ -139,6 +152,8 @@ const vendorApplicationSchema = new mongoose.Schema(
       userIdImagePublicId: { type: String },
       businessRegImageUrl: { type: String },
       businessRegImagePublicId: { type: String },
+      logoUrl: { type: String },
+      logoPublicId: { type: String },
     },
     pdfUrl: { type: String },
     pdfPublicId: { type: String },
@@ -211,6 +226,16 @@ const userSchema = new mongoose.Schema<IUser>(
     vendorInfo: vendorInfoSchema,
     vendorApproval: vendorApprovalSchema,
     vendorApplication: vendorApplicationSchema,
+
+    vendorSubscription: {
+      planKey: { type: String, enum: ["bronze", "silver", "gold"] },
+      status: { type: String },
+      currentPeriodEnd: { type: Date },
+      cancelAtPeriodEnd: { type: Boolean },
+      stripeCustomerId: { type: String },
+      stripeSubscriptionId: { type: String },
+      stripePriceId: { type: String },
+    },
   },
   {
     timestamps: true,

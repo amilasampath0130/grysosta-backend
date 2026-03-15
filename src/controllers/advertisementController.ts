@@ -39,6 +39,20 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
       });
     }
 
+    const subscriptionStatus = (req.user as any)?.vendorSubscription?.status as
+      | string
+      | undefined;
+    const hasActiveSubscription =
+      subscriptionStatus === "active" || subscriptionStatus === "trialing";
+
+    if (!hasActiveSubscription) {
+      return res.status(403).json({
+        success: false,
+        message: "Please subscribe to a plan before creating advertisements",
+        code: "SUBSCRIPTION_REQUIRED",
+      });
+    }
+
     // Enforce: only one pending advertisement at a time.
     // Vendors should pay / wait for approval instead of creating another.
     const existingPending = await Advertisement.findOne({

@@ -7,6 +7,7 @@ import bcrypt from "bcryptjs";
 import {
   uploadImageBufferToCloudinary,
 } from "../lib/cloudinary.js";
+import { imageSize } from "image-size";
 
 /* =====================================================
    CONFIG
@@ -343,6 +344,7 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
 
     const userIdImageFile = files?.userIdImage?.[0];
     const businessRegImageFile = files?.businessRegImage?.[0];
+    const vendorLogoFile = files?.vendorLogo?.[0];
 
     // Basic validation (matches vendor dashboard form expectations)
     if (!firstName || !lastName || !email) {
@@ -360,22 +362,40 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (!userIdImageFile || !businessRegImageFile) {
+    if (!userIdImageFile || !businessRegImageFile || !vendorLogoFile) {
       return res.status(400).json({
         success: false,
-        message: "userIdImage and businessRegImage are required",
+        message: "userIdImage, businessRegImage, and vendorLogo are required",
+      });
+    }
+
+    // Enforce vendor logo dimensions (1080x1080) for consistent mobile offers UI.
+    try {
+      const { width, height } = imageSize(vendorLogoFile.buffer);
+      if (width !== 1080 || height !== 1080) {
+        return res.status(400).json({
+          success: false,
+          message: "Vendor logo must be exactly 1080x1080 pixels",
+        });
+      }
+    } catch (e) {
+      console.error("Vendor logo dimension check failed:", e);
+      return res.status(400).json({
+        success: false,
+        message: "Unable to read vendor logo image",
       });
     }
 
     const folderBase = `grysosta/vendor-applications/${targetUser._id.toString()}`;
 
     // Upload images first (so admins can also inspect images if needed)
-    const [userIdUpload, businessRegUpload] = await Promise.all([
+    const [userIdUpload, businessRegUpload, vendorLogoUpload] = await Promise.all([
       uploadImageBufferToCloudinary(userIdImageFile.buffer, `${folderBase}/documents`),
       uploadImageBufferToCloudinary(
         businessRegImageFile.buffer,
         `${folderBase}/documents`,
       ),
+      uploadImageBufferToCloudinary(vendorLogoFile.buffer, `${folderBase}/branding`),
     ]);
 
 
@@ -384,7 +404,11 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       { _id: targetUser._id },
       {
         $set: {
-          vendorInfo,
+          vendorInfo: {
+            ...vendorInfo,
+            logoUrl: vendorLogoUpload.secure_url,
+            logoPublicId: vendorLogoUpload.public_id,
+          },
           vendorStatus: "PENDING",
           vendorApplication: {
             personal: {
@@ -414,6 +438,8 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
               userIdImagePublicId: userIdUpload.public_id,
               businessRegImageUrl: businessRegUpload.secure_url,
               businessRegImagePublicId: businessRegUpload.public_id,
+              logoUrl: vendorLogoUpload.secure_url,
+              logoPublicId: vendorLogoUpload.public_id,
             },
             submittedAt: new Date(),
           },

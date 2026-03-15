@@ -13,6 +13,10 @@ import {
   deleteUser,
   deleteVendor,
 } from "../controllers/adminAuthController.js";
+import {
+  listSubscriptionPlansAdmin,
+  updateSubscriptionPlanPriceAdmin,
+} from "../controllers/subscriptionAdminController.js";
 
 const router = express.Router();
 
@@ -47,5 +51,19 @@ router.get(
   getAdminProfile,
 );
 router.post("/verify-otp", verifyAdminOtp);
+
+router.get(
+  "/subscription-plans",
+  authenticateToken,
+  authorizeRoles("admin"),
+  listSubscriptionPlansAdmin,
+);
+
+router.patch(
+  "/subscription-plans/:key",
+  authenticateToken,
+  authorizeRoles("admin"),
+  updateSubscriptionPlanPriceAdmin,
+);
 
 export default router;

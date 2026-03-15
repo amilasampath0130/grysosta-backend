@@ -1,23 +1,28 @@
 import express, { Request, Response } from "express";
-import Stripe from "stripe";
+import type Stripe from "stripe";
 import Advertisement from "../models/Advertisement.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { authorizeRoles } from "../middleware/authMiddleware.js";
+import User from "../models/User.js";
+import {
+  requireStripe,
+  stripe,
+  stripeSecretKey,
+  stripeWebhookSecret,
+} from "../lib/stripeClient.js";
+import {
+  ensureSubscriptionPlans,
+  getPlanByKey,
+  getPublicPlans,
+} from "../lib/subscriptionPlans.js";
 
 const router = express.Router();
-
-const stripeSecretKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
-const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
 
 if (!stripeSecretKey) {
   // We don't throw at import-time to keep the server bootable for non-payment routes,
   // but payment endpoints will fail with a clear error.
   console.warn("STRIPE_SECRET_KEY is not set; payment endpoints will not work.");
 }
-
-const stripe = new Stripe(stripeSecretKey, {
-  // Let the installed Stripe SDK select its default typed API version.
-});
 
 const DEFAULT_AD_FEE_CENTS = 500; // $5.00 per payment
 
@@ -49,6 +54,234 @@ const getAdFeeCents = () => {
   return value;
 };
 
+const isActiveSubscriptionStatus = (status?: string) =>
+  status === "active" || status === "trialing";
+
+const getSubscriptionCurrentPeriodEnd = (subscription: Stripe.Subscription) => {
+  const ends = (subscription.items?.data || [])
+    .map((item) => item.current_period_end)
+    .filter((value): value is number => typeof value === "number");
+
+  if (ends.length === 0) return undefined;
+  const minEnd = Math.min(...ends);
+  return Number.isFinite(minEnd) ? new Date(minEnd * 1000) : undefined;
+};
+
+const syncVendorSubscription = async (stripeSub: Stripe.Subscription) => {
+  const subscriptionId = String(stripeSub.id || "").trim();
+  if (!subscriptionId) return;
+
+  const user = await User.findOne({
+    "vendorSubscription.stripeSubscriptionId": subscriptionId,
+  });
+
+  if (!user) return;
+
+  user.vendorSubscription = {
+    ...(user.vendorSubscription || {}),
+    status: stripeSub.status,
+    currentPeriodEnd: getSubscriptionCurrentPeriodEnd(stripeSub),
+    cancelAtPeriodEnd: Boolean(stripeSub.cancel_at_period_end),
+  };
+
+  await user.save();
+};
+
+const upsertVendorSubscriptionFromCheckoutSession = async (
+  session: Stripe.Checkout.Session,
+) => {
+  const vendorId = String(session.metadata?.vendorId || "").trim();
+  const planKey = String(session.metadata?.planKey || "").trim() as
+    | "bronze"
+    | "silver"
+    | "gold";
+
+  if (!vendorId || !planKey) return;
+
+  const user = await User.findById(vendorId);
+  if (!user) return;
+
+  const customerId =
+    typeof session.customer === "string" ? session.customer : undefined;
+  const subscriptionId =
+    typeof session.subscription === "string" ? session.subscription : undefined;
+
+  if (!subscriptionId) {
+    user.vendorSubscription = {
+      ...(user.vendorSubscription || {}),
+      planKey,
+      stripeCustomerId: customerId || user.vendorSubscription?.stripeCustomerId,
+    };
+    await user.save();
+    return;
+  }
+
+  const stripeClient = requireStripe();
+  const subscription = await stripeClient.subscriptions.retrieve(subscriptionId);
+
+  const priceId =
+    subscription.items?.data?.[0]?.price?.id ||
+    (typeof session.metadata?.stripePriceId === "string"
+      ? session.metadata.stripePriceId
+      : undefined);
+
+  user.vendorSubscription = {
+    ...(user.vendorSubscription || {}),
+    planKey,
+    status: subscription.status,
+    currentPeriodEnd: getSubscriptionCurrentPeriodEnd(subscription),
+    cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+    stripeCustomerId: customerId || user.vendorSubscription?.stripeCustomerId,
+    stripeSubscriptionId: subscriptionId,
+    stripePriceId: priceId || user.vendorSubscription?.stripePriceId,
+  };
+
+  await user.save();
+};
+
+router.get("/subscription-plans", async (_req: Request, res: Response) => {
+  try {
+    await ensureSubscriptionPlans(stripe);
+    const plans = await getPublicPlans();
+    return res.json({
+      success: true,
+      plans,
+      checkoutAvailable: Boolean(stripeSecretKey),
+    });
+  } catch (error: any) {
+    console.error("List subscription plans error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: error?.message || "Failed to load plans" });
+  }
+});
+
+router.post(
+  "/create-subscription-checkout-session",
+  authenticateToken,
+  authorizeRoles("vendor"),
+  async (req: Request, res: Response) => {
+    try {
+      const stripeClient = requireStripe();
+      await ensureSubscriptionPlans(stripeClient);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const user = (req as any).user as any;
+
+      if (!user || user.vendorStatus !== "APPROVED") {
+        return res.status(403).json({
+          success: false,
+          message: "Only approved vendors can subscribe to a plan",
+        });
+      }
+
+      const planKey = String((req.body as any)?.planKey || "").trim() as
+        | "bronze"
+        | "silver"
+        | "gold";
+
+      if (!planKey || !["bronze", "silver", "gold"].includes(planKey)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "planKey is required" });
+      }
+
+      const plan = await getPlanByKey(planKey);
+      if (!plan || !plan.stripePriceId) {
+        return res
+          .status(500)
+          .json({ success: false, message: "Plan is not configured" });
+      }
+
+      const successUrl =
+        String(process.env.STRIPE_SUBSCRIPTION_SUCCESS_URL || "").trim() ||
+        "http://localhost:3002/vendor/billing?success=1&session_id={CHECKOUT_SESSION_ID}";
+      const cancelUrl =
+        String(process.env.STRIPE_SUBSCRIPTION_CANCEL_URL || "").trim() ||
+        "http://localhost:3002/vendor/billing?canceled=1";
+
+      const session = await stripeClient.checkout.sessions.create({
+        mode: "subscription",
+        payment_method_types: ["card"],
+        customer: user.vendorSubscription?.stripeCustomerId,
+        customer_email: user.vendorSubscription?.stripeCustomerId ? undefined : user.email,
+        line_items: [{ price: plan.stripePriceId, quantity: 1 }],
+        metadata: {
+          vendorId: String(user._id),
+          planKey,
+          stripePriceId: plan.stripePriceId,
+        },
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+
+      return res.json({ success: true, url: session.url, sessionId: session.id });
+    } catch (error: any) {
+      console.error("Create subscription checkout session error:", error);
+      return res
+        .status(500)
+        .json({ success: false, message: error?.message || "Failed to start checkout" });
+    }
+  },
+);
+
+router.post(
+  "/confirm-subscription-checkout-session",
+  authenticateToken,
+  authorizeRoles("vendor"),
+  async (req: Request, res: Response) => {
+    try {
+      const stripeClient = requireStripe();
+
+      const { sessionId } = (req.body || {}) as { sessionId?: string };
+      const trimmedSessionId = String(sessionId || "").trim();
+      if (!trimmedSessionId) {
+        return res
+          .status(400)
+          .json({ success: false, message: "sessionId is required" });
+      }
+
+      const session = await stripeClient.checkout.sessions.retrieve(trimmedSessionId);
+      if (!session) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Checkout session not found" });
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const userId = String((req as any).user?._id || "").trim();
+      const vendorId = String(session.metadata?.vendorId || "").trim();
+
+      if (!userId || !vendorId || userId !== vendorId) {
+        return res.status(403).json({ success: false, message: "Forbidden" });
+      }
+
+      if (session.status !== "complete") {
+        return res.status(409).json({
+          success: false,
+          message: "Checkout not completed yet",
+          status: session.status,
+        });
+      }
+
+      await upsertVendorSubscriptionFromCheckoutSession(session);
+
+      const user = await User.findById(userId).select("vendorSubscription");
+
+      return res.json({
+        success: true,
+        vendorSubscription: user?.vendorSubscription || null,
+        isActive: isActiveSubscriptionStatus(user?.vendorSubscription?.status),
+      });
+    } catch (error: any) {
+      console.error("Confirm subscription checkout session error:", error);
+      return res
+        .status(500)
+        .json({ success: false, message: error?.message || "Failed to confirm subscription" });
+    }
+  },
+);
+
 router.post(
   "/create-advertisement-checkout-session",
   authenticateToken,
@@ -60,6 +293,8 @@ router.post(
           .status(500)
           .json({ success: false, message: "Stripe is not configured" });
       }
+
+      const stripeClient = requireStripe();
 
       const feeCents = getAdFeeCents();
       if (!feeCents) {
@@ -139,7 +374,7 @@ router.post(
         String(process.env.STRIPE_CHECKOUT_CANCEL_URL || "").trim() ||
         "http://localhost:3002/vendor/dashboard?payment=cancel";
 
-      const session = await stripe.checkout.sessions.create({
+      const session = await stripeClient.checkout.sessions.create({
         mode: "payment",
         payment_method_types: ["card"],
         client_reference_id: String(advertisement._id),
@@ -197,6 +432,8 @@ router.post(
           .json({ success: false, message: "Stripe is not configured" });
       }
 
+      const stripeClient = requireStripe();
+
       const { sessionId } = (req.body || {}) as { sessionId?: string };
       const trimmedSessionId = String(sessionId || "").trim();
       if (!trimmedSessionId) {
@@ -205,7 +442,7 @@ router.post(
           .json({ success: false, message: "sessionId is required" });
       }
 
-      const session = await stripe.checkout.sessions.retrieve(trimmedSessionId);
+      const session = await stripeClient.checkout.sessions.retrieve(trimmedSessionId);
       if (!session) {
         return res
           .status(404)
@@ -339,7 +576,8 @@ router.post(
 
       let event: Stripe.Event;
       try {
-        event = stripe.webhooks.constructEvent(
+        const stripeClient = requireStripe();
+        event = stripeClient.webhooks.constructEvent(
           // `express.raw()` gives us a Buffer
           req.body,
           signature,
@@ -353,6 +591,11 @@ router.post(
       if (event.type === "checkout.session.completed") {
         const session = event.data.object as Stripe.Checkout.Session;
         const advertisementId = String(session.metadata?.advertisementId || "").trim();
+
+        if (session.mode === "subscription") {
+          await upsertVendorSubscriptionFromCheckoutSession(session);
+          return res.json({ received: true });
+        }
 
         const coverageStart = parseIsoDateOnly(session.metadata?.coverageStart);
         const coverageEnd = parseIsoDateOnly(session.metadata?.coverageEnd);
@@ -398,6 +641,15 @@ router.post(
             await advertisement.save();
           }
         }
+      }
+
+      if (
+        event.type === "customer.subscription.updated" ||
+        event.type === "customer.subscription.created" ||
+        event.type === "customer.subscription.deleted"
+      ) {
+        const subscription = event.data.object as Stripe.Subscription;
+        await syncVendorSubscription(subscription);
       }
 
       return res.json({ received: true });
