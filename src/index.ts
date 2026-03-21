@@ -9,6 +9,7 @@ import adminRoutes from "./routes/adminRoutes.js";
 import VendorRoutes from "./routes/vendorRoutes.js";
 import advertisementRoutes from "./routes/advertisementRoutes.js";
 import paymentRoutes from "./routes/payment.js";
+import offerRoutes from "./routes/offerRoutes.js";
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 5000;
 
@@ -25,6 +26,9 @@ app.use(
       "http://localhost:3000",
       "http://localhost:3001",
       "http://localhost:3002",
+      "http://localhost:3100",
+      "http://localhost:3101",
+      "http://localhost:3102",
     ],
     credentials: true,
   }),
@@ -34,6 +38,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/vendor", VendorRoutes);
 app.use("/api/advertisements", advertisementRoutes);
+app.use("/api/offers", offerRoutes);
 app.use("/api/payment", paymentRoutes);
 //for admin routes
 app.use("/api/admin", adminRoutes);

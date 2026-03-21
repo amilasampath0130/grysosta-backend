@@ -16,6 +16,8 @@ const upload = multer({
 
 export const uploadAdvertisementImage = upload.single("image");
 
+export const uploadOfferImage = upload.single("image");
+
 export const uploadVendorDocuments = upload.fields([
   { name: "userIdImage", maxCount: 1 },
   { name: "businessRegImage", maxCount: 1 },

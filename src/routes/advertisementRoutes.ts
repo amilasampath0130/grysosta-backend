@@ -8,6 +8,7 @@ import {
   deleteAdvertisement,
   getMyAdvertisementById,
   informAdvertisementVendor,
+  listActiveAdvertisements,
   listMyAdvertisements,
   listAdvertisementsByVendor,
   listPendingAdvertisements,
@@ -55,6 +56,13 @@ router.get(
   authenticateToken,
   authorizeRoles("admin"),
   listPendingAdvertisements,
+);
+
+router.get(
+  "/active",
+  authenticateToken,
+  authorizeRoles("admin"),
+  listActiveAdvertisements,
 );
 router.post(
   "/approve/:advertisementId",

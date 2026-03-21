@@ -1,6 +1,7 @@
 import express, { Request, Response } from "express";
 import type Stripe from "stripe";
 import Advertisement from "../models/Advertisement.js";
+import Offer from "../models/Offer.js";
 import { authenticateToken } from "../middleware/auth.js";
 import { authorizeRoles } from "../middleware/authMiddleware.js";
 import User from "../models/User.js";
@@ -10,6 +11,7 @@ import {
   stripeSecretKey,
   stripeWebhookSecret,
 } from "../lib/stripeClient.js";
+import { deleteCloudinaryImage } from "../lib/cloudinary.js";
 import {
   ensureSubscriptionPlans,
   getPlanByKey,
@@ -57,6 +59,37 @@ const getAdFeeCents = () => {
 const isActiveSubscriptionStatus = (status?: string) =>
   status === "active" || status === "trialing";
 
+const parsePlanKey = (value: unknown): "bronze" | "silver" | "gold" | undefined => {
+  const str = String(value || "").trim();
+  return str === "bronze" || str === "silver" || str === "gold" ? str : undefined;
+};
+
+const shouldPurgeOffersForSubscriptionStatus = (status?: string) =>
+  status === "canceled" || status === "unpaid" || status === "incomplete_expired";
+
+const purgeVendorOffers = async (vendorId: string) => {
+  if (!vendorId) return { deletedCount: 0 };
+
+  const offers = await Offer.find({ vendor: vendorId }).select(
+    "_id imagePublicId",
+  );
+
+  if (!offers.length) return { deletedCount: 0 };
+
+  for (const offer of offers) {
+    try {
+      if (offer.imagePublicId) {
+        await deleteCloudinaryImage(offer.imagePublicId);
+      }
+    } catch (cloudinaryError) {
+      console.error("Failed to delete offer image:", cloudinaryError);
+    }
+  }
+
+  const result = await Offer.deleteMany({ vendor: vendorId });
+  return { deletedCount: result.deletedCount || 0 };
+};
+
 const getSubscriptionCurrentPeriodEnd = (subscription: Stripe.Subscription) => {
   const ends = (subscription.items?.data || [])
     .map((item) => item.current_period_end)
@@ -77,14 +110,24 @@ const syncVendorSubscription = async (stripeSub: Stripe.Subscription) => {
 
   if (!user) return;
 
+  const firstItem = stripeSub.items?.data?.[0];
+  const price = firstItem?.price;
+  const planKeyFromStripe = parsePlanKey((price as any)?.metadata?.planKey);
+
   user.vendorSubscription = {
     ...(user.vendorSubscription || {}),
+    ...(planKeyFromStripe ? { planKey: planKeyFromStripe } : {}),
+    ...(price?.id ? { stripePriceId: price.id } : {}),
     status: stripeSub.status,
     currentPeriodEnd: getSubscriptionCurrentPeriodEnd(stripeSub),
     cancelAtPeriodEnd: Boolean(stripeSub.cancel_at_period_end),
   };
 
   await user.save();
+
+  if (shouldPurgeOffersForSubscriptionStatus(user.vendorSubscription?.status)) {
+    await purgeVendorOffers(String(user._id));
+  }
 };
 
 const upsertVendorSubscriptionFromCheckoutSession = async (
@@ -278,6 +321,158 @@ router.post(
       return res
         .status(500)
         .json({ success: false, message: error?.message || "Failed to confirm subscription" });
+    }
+  },
+);
+
+router.post(
+  "/change-subscription-plan",
+  authenticateToken,
+  authorizeRoles("vendor"),
+  async (req: Request, res: Response) => {
+    try {
+      const stripeClient = requireStripe();
+      await ensureSubscriptionPlans(stripeClient);
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const user = (req as any).user as any;
+      if (!user || user.vendorStatus !== "APPROVED") {
+        return res.status(403).json({
+          success: false,
+          message: "Only approved vendors can manage subscriptions",
+        });
+      }
+
+      const subscriptionId = String(user.vendorSubscription?.stripeSubscriptionId || "").trim();
+      if (!subscriptionId) {
+        return res.status(400).json({
+          success: false,
+          message: "No Stripe subscription found for this vendor",
+        });
+      }
+
+      const planKey = String((req.body as any)?.planKey || "").trim() as
+        | "bronze"
+        | "silver"
+        | "gold";
+
+      if (!planKey || !["bronze", "silver", "gold"].includes(planKey)) {
+        return res
+          .status(400)
+          .json({ success: false, message: "planKey is required" });
+      }
+
+      const plan = await getPlanByKey(planKey);
+      if (!plan?.stripePriceId) {
+        return res
+          .status(500)
+          .json({ success: false, message: "Plan is not configured" });
+      }
+
+      const subscription = await stripeClient.subscriptions.retrieve(subscriptionId);
+      const itemId = subscription.items?.data?.[0]?.id;
+      if (!itemId) {
+        return res.status(500).json({
+          success: false,
+          message: "Subscription items not found",
+        });
+      }
+
+      const updated = await stripeClient.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: false,
+        proration_behavior: "create_prorations",
+        items: [{ id: itemId, price: plan.stripePriceId }],
+      });
+
+      const dbUser = await User.findById(user._id).select("vendorSubscription");
+      if (!dbUser) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Vendor not found" });
+      }
+
+      dbUser.vendorSubscription = {
+        ...(dbUser.vendorSubscription || {}),
+        planKey,
+        stripePriceId: plan.stripePriceId,
+        status: updated.status,
+        currentPeriodEnd: getSubscriptionCurrentPeriodEnd(updated),
+        cancelAtPeriodEnd: Boolean(updated.cancel_at_period_end),
+      };
+      await dbUser.save();
+
+      return res.json({
+        success: true,
+        vendorSubscription: dbUser.vendorSubscription,
+        isActive: isActiveSubscriptionStatus(dbUser.vendorSubscription?.status),
+      });
+    } catch (error: any) {
+      console.error("Change subscription plan error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to change subscription plan",
+      });
+    }
+  },
+);
+
+router.post(
+  "/cancel-subscription",
+  authenticateToken,
+  authorizeRoles("vendor"),
+  async (req: Request, res: Response) => {
+    try {
+      const stripeClient = requireStripe();
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const user = (req as any).user as any;
+      if (!user || user.vendorStatus !== "APPROVED") {
+        return res.status(403).json({
+          success: false,
+          message: "Only approved vendors can manage subscriptions",
+        });
+      }
+
+      const subscriptionId = String(user.vendorSubscription?.stripeSubscriptionId || "").trim();
+      if (!subscriptionId) {
+        return res.status(400).json({
+          success: false,
+          message: "No Stripe subscription found for this vendor",
+        });
+      }
+
+      const canceled = await stripeClient.subscriptions.cancel(subscriptionId);
+
+      const dbUser = await User.findById(user._id).select("vendorSubscription");
+      if (!dbUser) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Vendor not found" });
+      }
+
+      dbUser.vendorSubscription = {
+        ...(dbUser.vendorSubscription || {}),
+        status: canceled.status,
+        currentPeriodEnd: getSubscriptionCurrentPeriodEnd(canceled),
+        cancelAtPeriodEnd: Boolean(canceled.cancel_at_period_end),
+      };
+
+      await dbUser.save();
+
+      const purge = await purgeVendorOffers(String(dbUser._id));
+
+      return res.json({
+        success: true,
+        message: "Subscription canceled. Vendor offers were removed.",
+        vendorSubscription: dbUser.vendorSubscription,
+        deletedOffersCount: purge.deletedCount,
+      });
+    } catch (error: any) {
+      console.error("Cancel subscription error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to cancel subscription",
+      });
     }
   },
 );

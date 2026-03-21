@@ -352,6 +352,34 @@ export const listPendingAdvertisements = async (
   }
 };
 
+export const listActiveAdvertisements = async (req: AuthRequest, res: Response) => {
+  try {
+    const now = new Date();
+
+    const advertisements = await Advertisement.find({
+      status: "APPROVED",
+      $or: [{ isPaid: true }, { isPaid: { $exists: false } }],
+      $and: [
+        { $or: [{ startDate: { $exists: false } }, { startDate: { $lte: now } }] },
+        { $or: [{ endDate: { $exists: false } }, { endDate: { $gte: now } }] },
+      ],
+    })
+      .sort({ endDate: 1, startDate: 1, createdAt: -1 })
+      .populate("vendor", "name email vendorInfo")
+      .select(
+        "title content advertisementType startDate endDate imageUrl status createdAt vendor approvedAt isPaid paidAt paidFrom paidThrough paymentAmountCents paymentCurrency",
+      );
+
+    return res.json({ success: true, advertisements });
+  } catch (error) {
+    console.error("List active advertisements error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch active advertisements",
+    });
+  }
+};
+
 export const listAdvertisementsByVendor = async (
   req: AuthRequest,
   res: Response,
