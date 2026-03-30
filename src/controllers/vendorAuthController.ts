@@ -550,6 +550,50 @@ export const getApprovedVendors = async (req: AuthRequest, res: Response) => {
 };
 
 /* =====================================================
+   LIST VENDORS (PUBLIC - MOBILE)
+   Returns approved vendors with safe, non-sensitive fields.
+===================================================== */
+
+export const getPublicApprovedVendors = async (req: Request, res: Response) => {
+  try {
+    const vendors = await User.find({
+      vendorStatus: "APPROVED",
+      role: "vendor",
+    })
+      .select("name vendorInfo vendorApplication")
+      .sort({ "vendorInfo.businessName": 1, name: 1 });
+
+    const result = vendors.map((vendor) => {
+      const businessName =
+        vendor.vendorInfo?.businessName ||
+        vendor.vendorApplication?.business?.businessName ||
+        vendor.name;
+
+      const logoUrl =
+        vendor.vendorInfo?.logoUrl ||
+        vendor.vendorApplication?.documents?.logoUrl ||
+        undefined;
+
+      const category = vendor.vendorApplication?.business?.businessCategory;
+
+      return {
+        id: vendor._id.toString(),
+        name: businessName,
+        logoUrl,
+        category,
+      };
+    });
+
+    return res.json({ success: true, vendors: result });
+  } catch (error) {
+    console.error("Public vendor list error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch vendors" });
+  }
+};
+
+/* =====================================================
    GET SINGLE VENDOR APPLICATION (ADMIN)
 ===================================================== */
 

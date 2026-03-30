@@ -11,6 +11,7 @@ import {
   rejectVendor,
   getPendingVendors,
   getApprovedVendors,
+  getPublicApprovedVendors,
   getVendorApplicationById,
 } from "../controllers/vendorAuthController.js";
 import { authenticateToken } from "../middleware/auth.js";
@@ -47,6 +48,9 @@ router.post(
   uploadVendorDocuments,
   submitVendorInfo,
 );
+
+//== Public: Get Approved Vendors (Mobile) ==
+router.get("/public/approved", getPublicApprovedVendors);
 
 //== Admin: Get Pending Vendors ==
 router.get(

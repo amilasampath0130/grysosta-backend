@@ -38,6 +38,8 @@ export interface IUser {
     ownerName: string;
     phone: string;
     address: string;
+    logoUrl?: string;
+    logoPublicId?: string;
   };
 
   vendorApplication?: {
@@ -68,6 +70,8 @@ export interface IUser {
       userIdImagePublicId?: string;
       businessRegImageUrl?: string;
       businessRegImagePublicId?: string;
+      logoUrl?: string;
+      logoPublicId?: string;
     };
     pdfUrl?: string;
     pdfPublicId?: string;
