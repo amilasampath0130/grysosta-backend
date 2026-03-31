@@ -7,6 +7,7 @@ import {
   getVendorProfile,
   vendorLogout,
   submitVendorInfo,
+  saveVendorProgress,
   approveVendor,
   rejectVendor,
   getPendingVendors,
@@ -40,6 +41,9 @@ router.post("/logout", vendorLogout);
 
 //== Vendor Profile ==
 router.get("/profile", authenticateToken, getVendorProfile);
+
+//== Save Vendor Onboarding Progress (Draft) ==
+router.post("/save-progress", optionalAuthenticateToken, saveVendorProgress);
 
 //== Submit Vendor Info ==
 router.post(

@@ -13,6 +13,8 @@ export interface IUser {
   username: string;
   email: string;
   password?: string;
+  // Vendor dashboard password (separate from main app login)
+  vendorDashboardPassword?: string;
   mobileNumber?: string;
   profileImage?: string;
 
@@ -53,6 +55,9 @@ export interface IUser {
       zipCode?: string;
       email?: string;
       phoneNumber?: string;
+      vendorRole?: string;
+      referralSalesId?: string;
+      termsAccepted?: boolean;
     };
     business?: {
       businessName?: string;
@@ -96,6 +101,7 @@ export interface IUser {
 
   // Methods
   comparePassword(candidatePassword: string): Promise<boolean>;
+  compareVendorDashboardPassword(candidatePassword: string): Promise<boolean>;
 }
 
 /* =======================
@@ -139,6 +145,9 @@ const vendorApplicationSchema = new mongoose.Schema(
       zipCode: { type: String },
       email: { type: String },
       phoneNumber: { type: String },
+      vendorRole: { type: String },
+      referralSalesId: { type: String },
+      termsAccepted: { type: Boolean },
     },
     business: {
       businessName: { type: String },
@@ -182,6 +191,10 @@ const userSchema = new mongoose.Schema<IUser>(
       required: function (this: { authProvider?: string }) {
         return this.authProvider === "local";
       },
+    },
+
+    vendorDashboardPassword: {
+      type: String,
     },
 
     mobileNumber: { type: String },
@@ -255,11 +268,26 @@ const userSchema = new mongoose.Schema<IUser>(
 
 // Hash password before save
 userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
   if (this.authProvider === "google") return next();
 
+  const shouldHashPassword = this.isModified("password") && !!this.password;
+  const shouldHashVendorDashboardPassword =
+    this.isModified("vendorDashboardPassword") && !!this.vendorDashboardPassword;
+
+  if (!shouldHashPassword && !shouldHashVendorDashboardPassword) return next();
+
   const salt = await bcrypt.genSalt(12);
-  this.password = await bcrypt.hash(this.password as string, salt);
+
+  if (shouldHashPassword) {
+    this.password = await bcrypt.hash(this.password as string, salt);
+  }
+
+  if (shouldHashVendorDashboardPassword) {
+    this.vendorDashboardPassword = await bcrypt.hash(
+      this.vendorDashboardPassword as string,
+      salt,
+    );
+  }
   next();
 });
 
@@ -272,6 +300,13 @@ userSchema.methods.comparePassword = async function (
 ): Promise<boolean> {
   if (!this.password) return false;
   return bcrypt.compare(candidatePassword, this.password);
+};
+
+userSchema.methods.compareVendorDashboardPassword = async function (
+  candidatePassword: string,
+): Promise<boolean> {
+  if (!this.vendorDashboardPassword) return false;
+  return bcrypt.compare(candidatePassword, this.vendorDashboardPassword);
 };
 
 /* =======================

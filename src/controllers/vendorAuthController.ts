@@ -71,7 +71,9 @@ export const vendorLogin = async (req: Request, res: Response) => {
     });
   }
 
-  const isMatch = await user.comparePassword(password);
+  const isMatch = user.vendorDashboardPassword
+    ? await user.compareVendorDashboardPassword(password)
+    : await user.comparePassword(password);
   if (!isMatch) {
     console.debug("vendorLogin: password mismatch for", user.email);
     return res
@@ -242,6 +244,18 @@ export const getVendorProfile = async (req: AuthRequest, res: Response) => {
       ? (currentUser as any).toObject()
       : currentUser;
 
+  // Never expose secrets to the client.
+  if (baseUser && typeof baseUser === "object") {
+    delete (baseUser as any).password;
+    delete (baseUser as any).vendorDashboardPassword;
+    delete (baseUser as any).adminOtp;
+    delete (baseUser as any).adminOtpExpires;
+    delete (baseUser as any).adminOtpSentAt;
+    delete (baseUser as any).emailOtp;
+    delete (baseUser as any).emailOtpExpires;
+    delete (baseUser as any).emailOtpSentAt;
+  }
+
   res.json({
     success: true,
     user: {
@@ -287,6 +301,12 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
     zipCode,
     email,
     phoneNumber,
+
+    // Vendor dashboard fields
+    vendorRole,
+    referralSalesId,
+    termsAccepted,
+    vendorDashboardPassword,
     // Business
     businessName,
     businessType,
@@ -324,6 +344,30 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       return res.status(403).json({
         success: false,
         message: "Account not verified",
+      });
+    }
+
+    const normalizedTermsAccepted =
+      termsAccepted === true || String(termsAccepted).toLowerCase() === "true";
+
+    if (!vendorRole) {
+      return res.status(400).json({
+        success: false,
+        message: "vendorRole is required",
+      });
+    }
+
+    if (!normalizedTermsAccepted) {
+      return res.status(400).json({
+        success: false,
+        message: "termsAccepted must be true",
+      });
+    }
+
+    if (!vendorDashboardPassword || String(vendorDashboardPassword).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "vendorDashboardPassword must be at least 8 characters",
       });
     }
 
@@ -387,6 +431,10 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
     }
 
     const folderBase = `grysosta/vendor-applications/${targetUser._id.toString()}`;
+    const vendorDashboardPasswordHash = await bcrypt.hash(
+      String(vendorDashboardPassword),
+      12,
+    );
 
     // Upload images first (so admins can also inspect images if needed)
     const [userIdUpload, businessRegUpload, vendorLogoUpload] = await Promise.all([
@@ -404,6 +452,7 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       { _id: targetUser._id },
       {
         $set: {
+          vendorDashboardPassword: vendorDashboardPasswordHash,
           vendorInfo: {
             ...vendorInfo,
             logoUrl: vendorLogoUpload.secure_url,
@@ -421,6 +470,9 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
               zipCode,
               email,
               phoneNumber,
+              vendorRole,
+              referralSalesId,
+              termsAccepted: normalizedTermsAccepted,
             },
             business: {
               businessName,
@@ -457,6 +509,146 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
     return res.status(500).json({
       success: false,
       message: "Failed to submit vendor information. Please try again.",
+    });
+  }
+};
+
+/* =====================================================
+   SAVE VENDOR PROGRESS (DRAFT)
+===================================================== */
+
+export const saveVendorProgress = async (req: AuthRequest, res: Response) => {
+  const authUser = req.user as any | undefined;
+
+  const {
+    // Personal
+    firstName,
+    middleName,
+    lastName,
+    address,
+    city,
+    state,
+    zipCode,
+    email,
+    phoneNumber,
+    vendorRole,
+    referralSalesId,
+    termsAccepted,
+    vendorDashboardPassword,
+
+    // Business (optional)
+    businessName,
+    businessType,
+    businessCategory,
+    businessAddress,
+    businessPhoneNumber,
+    typeofoffering,
+    website,
+    yearEstablished,
+    taxId,
+  } = req.body as any;
+
+  let targetUser = authUser;
+
+  try {
+    if (!targetUser) {
+      if (!email) {
+        return res.status(400).json({
+          success: false,
+          message: "Email required for unauthenticated save",
+        });
+      }
+      targetUser = await User.findOne({ email });
+      if (!targetUser) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+    }
+
+    if (targetUser.role === "admin") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Admins cannot save vendor info" });
+    }
+
+    if (!targetUser.isVerified) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Account not verified" });
+    }
+
+    const normalizedTermsAccepted =
+      termsAccepted === true || String(termsAccepted).toLowerCase() === "true";
+
+    // Update draft application fields (merge)
+    targetUser.vendorApplication = targetUser.vendorApplication || {};
+    targetUser.vendorApplication.personal =
+      targetUser.vendorApplication.personal || {};
+    targetUser.vendorApplication.business =
+      targetUser.vendorApplication.business || {};
+
+    const personalDraft = targetUser.vendorApplication.personal as any;
+    const businessDraft = targetUser.vendorApplication.business as any;
+
+    // Personal
+    if (typeof firstName === "string") personalDraft.firstName = firstName;
+    if (typeof middleName === "string") personalDraft.middleName = middleName;
+    if (typeof lastName === "string") personalDraft.lastName = lastName;
+    if (typeof address === "string") personalDraft.address = address;
+    if (typeof city === "string") personalDraft.city = city;
+    if (typeof state === "string") personalDraft.state = state;
+    if (typeof zipCode === "string") personalDraft.zipCode = zipCode;
+    if (typeof email === "string") personalDraft.email = email;
+    if (typeof phoneNumber === "string") personalDraft.phoneNumber = phoneNumber;
+    if (typeof vendorRole === "string") personalDraft.vendorRole = vendorRole;
+    if (typeof referralSalesId === "string") {
+      personalDraft.referralSalesId = referralSalesId;
+    }
+    if (termsAccepted !== undefined) {
+      personalDraft.termsAccepted = normalizedTermsAccepted;
+    }
+
+    // Business
+    if (typeof businessName === "string") businessDraft.businessName = businessName;
+    if (typeof businessType === "string") businessDraft.businessType = businessType;
+    if (typeof businessCategory === "string") {
+      businessDraft.businessCategory = businessCategory;
+    }
+    if (typeof businessAddress === "string") {
+      businessDraft.businessAddress = businessAddress;
+    }
+    if (typeof businessPhoneNumber === "string") {
+      businessDraft.businessPhoneNumber = businessPhoneNumber;
+    }
+    if (typeof typeofoffering === "string") {
+      businessDraft.typeofoffering = typeofoffering;
+    }
+    if (typeof website === "string") businessDraft.website = website;
+    if (typeof yearEstablished === "string") {
+      businessDraft.yearEstablished = yearEstablished;
+    }
+    if (typeof taxId === "string") businessDraft.taxId = taxId;
+
+    // Vendor dashboard password (optional on save)
+    if (vendorDashboardPassword) {
+      if (String(vendorDashboardPassword).length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "vendorDashboardPassword must be at least 8 characters",
+        });
+      }
+      targetUser.vendorDashboardPassword = String(vendorDashboardPassword);
+    }
+
+    await targetUser.save();
+
+    res.json({ success: true, message: "Progress saved" });
+  } catch (err) {
+    console.error("Save vendor progress error:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to save progress. Please try again.",
     });
   }
 };
