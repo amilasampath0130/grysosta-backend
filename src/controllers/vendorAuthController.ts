@@ -317,6 +317,17 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
     website,
     yearEstablished,
     taxId,
+
+    // Extra business fields
+    planKey,
+    serviceArea,
+    businessDescription,
+    operatingHours,
+    facebookUrl,
+    instagramUrl,
+    tiktokUrl,
+    vacayCoinParticipation,
+    multiLocation,
   } = req.body as any;
 
   let targetUser = authUser;
@@ -413,13 +424,32 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Enforce vendor logo dimensions (1080x1080) for consistent mobile offers UI.
+    if (
+      vendorLogoFile.mimetype !== "image/png" &&
+      vendorLogoFile.mimetype !== "image/jpeg"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Vendor logo must be a PNG or JPEG image",
+      });
+    }
+
+    // Enforce vendor logo dimensions (800x800 to 2000x2000).
     try {
       const { width, height } = imageSize(vendorLogoFile.buffer);
-      if (width !== 1080 || height !== 1080) {
+      const w = Number(width);
+      const h = Number(height);
+      if (
+        !Number.isFinite(w) ||
+        !Number.isFinite(h) ||
+        w < 800 ||
+        h < 800 ||
+        w > 2000 ||
+        h > 2000
+      ) {
         return res.status(400).json({
           success: false,
-          message: "Vendor logo must be exactly 1080x1080 pixels",
+          message: "Vendor logo must be between 800x800 and 2000x2000 pixels",
         });
       }
     } catch (e) {
@@ -484,6 +514,19 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
               website,
               yearEstablished,
               taxId,
+              planKey,
+              serviceArea,
+              businessDescription,
+              operatingHours,
+              facebookUrl,
+              instagramUrl,
+              tiktokUrl,
+              vacayCoinParticipation:
+                vacayCoinParticipation === true ||
+                String(vacayCoinParticipation).toLowerCase() === "true",
+              multiLocation:
+                multiLocation === true ||
+                String(multiLocation).toLowerCase() === "true",
             },
             documents: {
               userIdImageUrl: userIdUpload.secure_url,
@@ -546,6 +589,17 @@ export const saveVendorProgress = async (req: AuthRequest, res: Response) => {
     website,
     yearEstablished,
     taxId,
+
+    // Extra business fields
+    planKey,
+    serviceArea,
+    businessDescription,
+    operatingHours,
+    facebookUrl,
+    instagramUrl,
+    tiktokUrl,
+    vacayCoinParticipation,
+    multiLocation,
   } = req.body as any;
 
   let targetUser = authUser;
@@ -629,6 +683,29 @@ export const saveVendorProgress = async (req: AuthRequest, res: Response) => {
       businessDraft.yearEstablished = yearEstablished;
     }
     if (typeof taxId === "string") businessDraft.taxId = taxId;
+
+    if (typeof planKey === "string") businessDraft.planKey = planKey;
+    if (typeof serviceArea === "string") businessDraft.serviceArea = serviceArea;
+    if (typeof businessDescription === "string") {
+      businessDraft.businessDescription = businessDescription;
+    }
+    if (typeof operatingHours === "string") {
+      businessDraft.operatingHours = operatingHours;
+    }
+    if (typeof facebookUrl === "string") businessDraft.facebookUrl = facebookUrl;
+    if (typeof instagramUrl === "string") businessDraft.instagramUrl = instagramUrl;
+    if (typeof tiktokUrl === "string") businessDraft.tiktokUrl = tiktokUrl;
+
+    if (vacayCoinParticipation !== undefined) {
+      businessDraft.vacayCoinParticipation =
+        vacayCoinParticipation === true ||
+        String(vacayCoinParticipation).toLowerCase() === "true";
+    }
+
+    if (multiLocation !== undefined) {
+      businessDraft.multiLocation =
+        multiLocation === true || String(multiLocation).toLowerCase() === "true";
+    }
 
     // Vendor dashboard password (optional on save)
     if (vendorDashboardPassword) {

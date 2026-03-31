@@ -69,6 +69,15 @@ export interface IUser {
       website?: string;
       yearEstablished?: string;
       taxId?: string;
+      planKey?: "bronze" | "silver" | "gold" | string;
+      serviceArea?: string;
+      businessDescription?: string;
+      operatingHours?: string;
+      facebookUrl?: string;
+      instagramUrl?: string;
+      tiktokUrl?: string;
+      vacayCoinParticipation?: boolean;
+      multiLocation?: boolean;
     };
     documents?: {
       userIdImageUrl?: string;
@@ -159,6 +168,15 @@ const vendorApplicationSchema = new mongoose.Schema(
       website: { type: String },
       yearEstablished: { type: String },
       taxId: { type: String },
+      planKey: { type: String },
+      serviceArea: { type: String },
+      businessDescription: { type: String },
+      operatingHours: { type: String },
+      facebookUrl: { type: String },
+      instagramUrl: { type: String },
+      tiktokUrl: { type: String },
+      vacayCoinParticipation: { type: Boolean },
+      multiLocation: { type: Boolean },
     },
     documents: {
       userIdImageUrl: { type: String },
