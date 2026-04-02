@@ -7,6 +7,11 @@ import {
 } from "../lib/cloudinary.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import User from "../models/User.js";
+import {
+  countVendorPlanUsage,
+  getVendorActivePlanKey,
+  getVendorPlanDefinition,
+} from "../lib/vendorBilling.js";
 
 const parseDateOrUndefined = (value: unknown): Date | undefined => {
   if (value === undefined || value === null) return undefined;
@@ -53,23 +58,30 @@ export const createAdvertisement = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    // Enforce: only one pending advertisement at a time.
-    // Vendors should pay / wait for approval instead of creating another.
-    const existingPending = await Advertisement.findOne({
-      vendor: req.user._id,
-      status: "PENDING",
-    })
-      .sort({ createdAt: -1 })
-      .select("_id isPaid");
+    const activePlanKey = getVendorActivePlanKey(req.user as any);
+    if (!activePlanKey) {
+      return res.status(403).json({
+        success: false,
+        message: "An active subscription plan is required to create advertisements",
+        code: "SUBSCRIPTION_REQUIRED",
+      });
+    }
 
-    if (existingPending) {
+    const activePlan = getVendorPlanDefinition(activePlanKey);
+    const usage = await countVendorPlanUsage(String(req.user._id));
+    const advertisementLimit = activePlan.limits.advertisementLimit;
+
+    if (
+      advertisementLimit !== null &&
+      usage.occupiedAdvertisementCount >= advertisementLimit
+    ) {
       return res.status(409).json({
         success: false,
-        message:
-          existingPending.isPaid === false
-            ? "You already have a pending advertisement. Complete payment to submit it for admin approval."
-            : "You already have a pending advertisement awaiting admin approval.",
-        advertisement: existingPending,
+        code: "PLAN_LIMIT_REACHED",
+        message: `Your ${activePlan.name} plan allows up to ${advertisementLimit} active or pending advertisements. Upgrade your plan or remove an existing advertisement to continue.`,
+        planKey: activePlan.key,
+        limit: advertisementLimit,
+        currentUsage: usage.occupiedAdvertisementCount,
       });
     }
 

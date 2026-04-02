@@ -69,7 +69,7 @@ export interface IUser {
       website?: string;
       yearEstablished?: string;
       taxId?: string;
-      planKey?: "bronze" | "silver" | "gold" | string;
+      planKey?: "bronze" | "silver" | "gold" | "diamond" | string;
       serviceArea?: string;
       businessDescription?: string;
       operatingHours?: string;
@@ -99,7 +99,7 @@ export interface IUser {
 
   // Vendor billing / subscription
   vendorSubscription?: {
-    planKey?: "bronze" | "silver" | "gold";
+    planKey?: "bronze" | "silver" | "gold" | "diamond";
     status?: string;
     currentPeriodEnd?: Date;
     cancelAtPeriodEnd?: boolean;
@@ -263,7 +263,7 @@ const userSchema = new mongoose.Schema<IUser>(
     vendorApplication: vendorApplicationSchema,
 
     vendorSubscription: {
-      planKey: { type: String, enum: ["bronze", "silver", "gold"] },
+      planKey: { type: String, enum: ["bronze", "silver", "gold", "diamond"] },
       status: { type: String },
       currentPeriodEnd: { type: Date },
       cancelAtPeriodEnd: { type: Boolean },

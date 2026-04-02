@@ -1,15 +1,21 @@
 import type Stripe from "stripe";
 import SubscriptionPlan, { type SubscriptionPlanKey } from "../models/SubscriptionPlan.js";
+import { getAllVendorPlanDefinitions } from "./vendorBilling.js";
 
 const DEFAULT_PLANS: Array<{
   key: SubscriptionPlanKey;
   name: string;
   priceCents: number;
   currency: string;
+  legacyPriceCents?: number[];
 }> = [
-  { key: "bronze", name: "Bronze Plan", priceCents: 1900, currency: "usd" },
-  { key: "silver", name: "Silver Plan", priceCents: 4900, currency: "usd" },
-  { key: "gold", name: "Gold Plan", priceCents: 9900, currency: "usd" },
+  ...getAllVendorPlanDefinitions().map((plan) => ({
+    key: plan.key,
+    name: `${plan.name} Plan`,
+    priceCents: plan.priceCents,
+    currency: plan.currency,
+    legacyPriceCents: plan.legacyPriceCents,
+  })),
 ];
 
 export const ensureSubscriptionPlans = async (stripe: Stripe | null) => {
@@ -42,6 +48,13 @@ export const ensureSubscriptionPlans = async (stripe: Stripe | null) => {
   });
 
   for (const plan of plans) {
+    const catalog = DEFAULT_PLANS.find((entry) => entry.key === plan.key);
+    if (!catalog) continue;
+
+    plan.name = catalog.name;
+    plan.currency = catalog.currency;
+    plan.active = true;
+
     if (!plan.stripeProductId) {
       const product = await stripe.products.create({
         name: plan.name,
@@ -50,15 +63,23 @@ export const ensureSubscriptionPlans = async (stripe: Stripe | null) => {
       plan.stripeProductId = product.id;
     }
 
-    if (!plan.stripePriceId) {
+    const shouldReplacePrice =
+      !plan.stripePriceId ||
+      plan.priceCents !== catalog.priceCents &&
+        (catalog.legacyPriceCents || []).includes(plan.priceCents);
+
+    if (shouldReplacePrice) {
       const price = await stripe.prices.create({
         product: plan.stripeProductId,
-        currency: plan.currency || "usd",
-        unit_amount: plan.priceCents,
+        currency: catalog.currency || "usd",
+        unit_amount: catalog.priceCents,
         recurring: { interval: "month" },
         metadata: { planKey: plan.key },
       });
       plan.stripePriceId = price.id;
+      plan.priceCents = catalog.priceCents;
+    } else if (plan.priceCents == null) {
+      plan.priceCents = catalog.priceCents;
     }
 
     await plan.save();
@@ -71,12 +92,22 @@ export const getPublicPlans = async () => {
     .select("key name currency priceCents")
     .lean();
 
-  return plans.map((p) => ({
+  return plans.map((p) => {
+    const definition = getAllVendorPlanDefinitions().find((entry) => entry.key === p.key);
+
+    return {
     key: p.key,
     name: p.name,
     currency: p.currency,
     priceCents: p.priceCents,
-  }));
+      summary: definition?.summary || "",
+      features: definition?.features || [],
+      limits: definition?.limits || {
+        activeOfferLimit: null,
+        advertisementLimit: null,
+      },
+    };
+  });
 };
 
 export const getPlanByKey = async (key: SubscriptionPlanKey) => {

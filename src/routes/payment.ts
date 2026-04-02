@@ -17,6 +17,9 @@ import {
   getPlanByKey,
   getPublicPlans,
 } from "../lib/subscriptionPlans.js";
+import {
+  normalizeVendorPlanKey,
+} from "../lib/vendorBilling.js";
 
 const router = express.Router();
 
@@ -59,9 +62,62 @@ const getAdFeeCents = () => {
 const isActiveSubscriptionStatus = (status?: string) =>
   status === "active" || status === "trialing";
 
-const parsePlanKey = (value: unknown): "bronze" | "silver" | "gold" | undefined => {
-  const str = String(value || "").trim();
-  return str === "bronze" || str === "silver" || str === "gold" ? str : undefined;
+const parsePlanKey = (value: unknown) => normalizeVendorPlanKey(value);
+
+const getVendorDashboardBaseUrl = (req: Request) => {
+  const configured = [
+    process.env.VENDOR_DASHBOARD_URL,
+    process.env.FRONTEND_URL,
+    process.env.APP_BASE_URL,
+  ]
+    .map((value) => String(value || "").trim())
+    .find(Boolean);
+
+  if (configured) {
+    return configured.replace(/\/$/, "");
+  }
+
+  const origin = String(req.headers.origin || "").trim();
+  if (origin) {
+    return origin.replace(/\/$/, "");
+  }
+
+  const referer = String(req.headers.referer || "").trim();
+  if (referer) {
+    try {
+      const refererUrl = new URL(referer);
+      return refererUrl.origin;
+    } catch {
+      // ignore invalid referer
+    }
+  }
+
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "http").split(",")[0].trim();
+  const forwardedHost = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim();
+
+  if (!forwardedHost) {
+    return "http://localhost:3102";
+  }
+
+  return `${forwardedProto || "http"}://${forwardedHost}`.replace(/\/$/, "");
+};
+
+const buildVendorDashboardUrl = (
+  req: Request,
+  pathname: string,
+  params: Record<string, string | undefined> = {},
+) => {
+  const url = new URL(pathname, `${getVendorDashboardBaseUrl(req)}/`);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value) {
+      url.searchParams.set(key, value);
+    }
+  }
+
+  return url
+    .toString()
+    .replace(/%7BCHECKOUT_SESSION_ID%7D/g, "{CHECKOUT_SESSION_ID}");
 };
 
 const shouldPurgeOffersForSubscriptionStatus = (status?: string) =>
@@ -100,6 +156,107 @@ const getSubscriptionCurrentPeriodEnd = (subscription: Stripe.Subscription) => {
   return Number.isFinite(minEnd) ? new Date(minEnd * 1000) : undefined;
 };
 
+const cancelPreviousSubscriptionIfNeeded = async (
+  session: Stripe.Checkout.Session,
+  activeSubscriptionId?: string,
+) => {
+  const previousSubscriptionId = String(
+    session.metadata?.previousSubscriptionId || "",
+  ).trim();
+
+  if (
+    !previousSubscriptionId ||
+    !activeSubscriptionId ||
+    previousSubscriptionId === activeSubscriptionId
+  ) {
+    return;
+  }
+
+  const stripeClient = requireStripe();
+  let previousSubscription: Stripe.Subscription;
+  try {
+    previousSubscription = await stripeClient.subscriptions.retrieve(
+      previousSubscriptionId,
+    );
+  } catch (error: any) {
+    if (
+      error?.type === "StripeInvalidRequestError" &&
+      error?.code === "resource_missing"
+    ) {
+      return;
+    }
+    throw error;
+  }
+
+  if (
+    previousSubscription.status === "canceled" ||
+    previousSubscription.status === "incomplete_expired"
+  ) {
+    return;
+  }
+
+  try {
+    await stripeClient.subscriptions.cancel(previousSubscriptionId);
+  } catch (error: any) {
+    if (
+      error?.type === "StripeInvalidRequestError" &&
+      error?.code === "resource_missing"
+    ) {
+      return;
+    }
+    throw error;
+  }
+};
+
+const createSubscriptionCheckoutSession = async ({
+  req,
+  user,
+  planKey,
+  stripePriceId,
+  nextPath,
+  previousSubscriptionId,
+}: {
+  req: Request;
+  user: any;
+  planKey: string;
+  stripePriceId: string;
+  nextPath?: string;
+  previousSubscriptionId?: string;
+}) => {
+  const stripeClient = requireStripe();
+
+  const successUrl =
+    String(process.env.STRIPE_SUBSCRIPTION_SUCCESS_URL || "").trim() ||
+    buildVendorDashboardUrl(req, "/vendor/billing", {
+      success: "1",
+      session_id: "{CHECKOUT_SESSION_ID}",
+      next: nextPath || undefined,
+    });
+  const cancelUrl =
+    String(process.env.STRIPE_SUBSCRIPTION_CANCEL_URL || "").trim() ||
+    buildVendorDashboardUrl(req, "/vendor/billing", {
+      canceled: "1",
+      next: nextPath || undefined,
+    });
+
+  return stripeClient.checkout.sessions.create({
+    mode: "subscription",
+    payment_method_types: ["card"],
+    customer: user.vendorSubscription?.stripeCustomerId,
+    customer_email: user.vendorSubscription?.stripeCustomerId ? undefined : user.email,
+    line_items: [{ price: stripePriceId, quantity: 1 }],
+    metadata: {
+      vendorId: String(user._id),
+      planKey,
+      stripePriceId,
+      nextPath: nextPath || "",
+      previousSubscriptionId: previousSubscriptionId || "",
+    },
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+  });
+};
+
 const syncVendorSubscription = async (stripeSub: Stripe.Subscription) => {
   const subscriptionId = String(stripeSub.id || "").trim();
   if (!subscriptionId) return;
@@ -134,10 +291,7 @@ const upsertVendorSubscriptionFromCheckoutSession = async (
   session: Stripe.Checkout.Session,
 ) => {
   const vendorId = String(session.metadata?.vendorId || "").trim();
-  const planKey = String(session.metadata?.planKey || "").trim() as
-    | "bronze"
-    | "silver"
-    | "gold";
+  const planKey = parsePlanKey(session.metadata?.planKey);
 
   if (!vendorId || !planKey) return;
 
@@ -180,6 +334,8 @@ const upsertVendorSubscriptionFromCheckoutSession = async (
   };
 
   await user.save();
+
+  await cancelPreviousSubscriptionIfNeeded(session, subscriptionId);
 };
 
 router.get("/subscription-plans", async (_req: Request, res: Response) => {
@@ -218,12 +374,10 @@ router.post(
         });
       }
 
-      const planKey = String((req.body as any)?.planKey || "").trim() as
-        | "bronze"
-        | "silver"
-        | "gold";
+      const planKey = parsePlanKey((req.body as any)?.planKey);
+      const nextPath = String((req.body as any)?.nextPath || "").trim();
 
-      if (!planKey || !["bronze", "silver", "gold"].includes(planKey)) {
+      if (!planKey) {
         return res
           .status(400)
           .json({ success: false, message: "planKey is required" });
@@ -236,26 +390,12 @@ router.post(
           .json({ success: false, message: "Plan is not configured" });
       }
 
-      const successUrl =
-        String(process.env.STRIPE_SUBSCRIPTION_SUCCESS_URL || "").trim() ||
-        "http://localhost:3002/vendor/billing?success=1&session_id={CHECKOUT_SESSION_ID}";
-      const cancelUrl =
-        String(process.env.STRIPE_SUBSCRIPTION_CANCEL_URL || "").trim() ||
-        "http://localhost:3002/vendor/billing?canceled=1";
-
-      const session = await stripeClient.checkout.sessions.create({
-        mode: "subscription",
-        payment_method_types: ["card"],
-        customer: user.vendorSubscription?.stripeCustomerId,
-        customer_email: user.vendorSubscription?.stripeCustomerId ? undefined : user.email,
-        line_items: [{ price: plan.stripePriceId, quantity: 1 }],
-        metadata: {
-          vendorId: String(user._id),
-          planKey,
-          stripePriceId: plan.stripePriceId,
-        },
-        success_url: successUrl,
-        cancel_url: cancelUrl,
+      const session = await createSubscriptionCheckoutSession({
+        req,
+        user,
+        planKey,
+        stripePriceId: plan.stripePriceId,
+        nextPath,
       });
 
       return res.json({ success: true, url: session.url, sessionId: session.id });
@@ -282,6 +422,13 @@ router.post(
         return res
           .status(400)
           .json({ success: false, message: "sessionId is required" });
+      }
+
+      if (trimmedSessionId === "{CHECKOUT_SESSION_ID}") {
+        return res.status(400).json({
+          success: false,
+          message: "Stripe did not substitute the checkout session id in the success URL",
+        });
       }
 
       const session = await stripeClient.checkout.sessions.retrieve(trimmedSessionId);
@@ -344,19 +491,10 @@ router.post(
       }
 
       const subscriptionId = String(user.vendorSubscription?.stripeSubscriptionId || "").trim();
-      if (!subscriptionId) {
-        return res.status(400).json({
-          success: false,
-          message: "No Stripe subscription found for this vendor",
-        });
-      }
+      const planKey = parsePlanKey((req.body as any)?.planKey);
+      const nextPath = String((req.body as any)?.nextPath || "").trim();
 
-      const planKey = String((req.body as any)?.planKey || "").trim() as
-        | "bronze"
-        | "silver"
-        | "gold";
-
-      if (!planKey || !["bronze", "silver", "gold"].includes(planKey)) {
+      if (!planKey) {
         return res
           .status(400)
           .json({ success: false, message: "planKey is required" });
@@ -369,42 +507,28 @@ router.post(
           .json({ success: false, message: "Plan is not configured" });
       }
 
-      const subscription = await stripeClient.subscriptions.retrieve(subscriptionId);
-      const itemId = subscription.items?.data?.[0]?.id;
-      if (!itemId) {
-        return res.status(500).json({
+      if (!subscriptionId) {
+        return res.status(409).json({
           success: false,
-          message: "Subscription items not found",
+          code: "SUBSCRIPTION_CHECKOUT_REQUIRED",
+          message: "This vendor does not have a Stripe subscription yet. Start checkout to switch plans.",
         });
       }
 
-      const updated = await stripeClient.subscriptions.update(subscriptionId, {
-        cancel_at_period_end: false,
-        proration_behavior: "create_prorations",
-        items: [{ id: itemId, price: plan.stripePriceId }],
-      });
-
-      const dbUser = await User.findById(user._id).select("vendorSubscription");
-      if (!dbUser) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Vendor not found" });
-      }
-
-      dbUser.vendorSubscription = {
-        ...(dbUser.vendorSubscription || {}),
+      const session = await createSubscriptionCheckoutSession({
+        req,
+        user,
         planKey,
         stripePriceId: plan.stripePriceId,
-        status: updated.status,
-        currentPeriodEnd: getSubscriptionCurrentPeriodEnd(updated),
-        cancelAtPeriodEnd: Boolean(updated.cancel_at_period_end),
-      };
-      await dbUser.save();
+        nextPath,
+        previousSubscriptionId: subscriptionId,
+      });
 
       return res.json({
         success: true,
-        vendorSubscription: dbUser.vendorSubscription,
-        isActive: isActiveSubscriptionStatus(dbUser.vendorSubscription?.status),
+        action: "checkout",
+        url: session.url,
+        sessionId: session.id,
       });
     } catch (error: any) {
       console.error("Change subscription plan error:", error);
@@ -441,7 +565,43 @@ router.post(
         });
       }
 
-      const canceled = await stripeClient.subscriptions.cancel(subscriptionId);
+      let canceled: Stripe.Subscription;
+      try {
+        canceled = await stripeClient.subscriptions.cancel(subscriptionId);
+      } catch (error: any) {
+        if (
+          error?.type === "StripeInvalidRequestError" &&
+          error?.code === "resource_missing"
+        ) {
+          const dbUser = await User.findById(user._id).select("vendorSubscription");
+          if (!dbUser) {
+            return res
+              .status(404)
+              .json({ success: false, message: "Vendor not found" });
+          }
+
+          dbUser.vendorSubscription = {
+            ...(dbUser.vendorSubscription || {}),
+            status: "canceled",
+            currentPeriodEnd: undefined,
+            cancelAtPeriodEnd: false,
+            stripeSubscriptionId: undefined,
+          };
+
+          await dbUser.save();
+
+          const purge = await purgeVendorOffers(String(dbUser._id));
+
+          return res.json({
+            success: true,
+            message: "Subscription was already removed in Stripe. Vendor offers were removed.",
+            vendorSubscription: dbUser.vendorSubscription,
+            deletedOffersCount: purge.deletedCount,
+          });
+        }
+
+        throw error;
+      }
 
       const dbUser = await User.findById(user._id).select("vendorSubscription");
       if (!dbUser) {
@@ -564,10 +724,15 @@ router.post(
 
       const successUrl =
         String(process.env.STRIPE_CHECKOUT_SUCCESS_URL || "").trim() ||
-        "http://localhost:3002/vendor/dashboard?payment=success&session_id={CHECKOUT_SESSION_ID}";
+        buildVendorDashboardUrl(req, "/vendor/dashboard", {
+          payment: "success",
+          session_id: "{CHECKOUT_SESSION_ID}",
+        });
       const cancelUrl =
         String(process.env.STRIPE_CHECKOUT_CANCEL_URL || "").trim() ||
-        "http://localhost:3002/vendor/dashboard?payment=cancel";
+        buildVendorDashboardUrl(req, "/vendor/dashboard", {
+          payment: "cancel",
+        });
 
       const session = await stripeClient.checkout.sessions.create({
         mode: "payment",
@@ -635,6 +800,13 @@ router.post(
         return res
           .status(400)
           .json({ success: false, message: "sessionId is required" });
+      }
+
+      if (trimmedSessionId === "{CHECKOUT_SESSION_ID}") {
+        return res.status(400).json({
+          success: false,
+          message: "Stripe did not substitute the checkout session id in the success URL",
+        });
       }
 
       const session = await stripeClient.checkout.sessions.retrieve(trimmedSessionId);

@@ -5,6 +5,7 @@ import {
   updatePlanPrice,
 } from "../lib/subscriptionPlans.js";
 import SubscriptionPlan, { type SubscriptionPlanKey } from "../models/SubscriptionPlan.js";
+import { VENDOR_PLAN_KEYS, getVendorPlanDefinition } from "../lib/vendorBilling.js";
 
 export const listSubscriptionPlansAdmin = async (_req: Request, res: Response) => {
   try {
@@ -23,6 +24,9 @@ export const listSubscriptionPlansAdmin = async (_req: Request, res: Response) =
         stripeProductId: p.stripeProductId,
         stripePriceId: p.stripePriceId,
         active: p.active,
+        summary: getVendorPlanDefinition(p.key).summary,
+        features: getVendorPlanDefinition(p.key).features,
+        limits: getVendorPlanDefinition(p.key).limits,
       })),
     });
   } catch (error: any) {
@@ -39,7 +43,7 @@ export const updateSubscriptionPlanPriceAdmin = async (req: Request, res: Respon
     await ensureSubscriptionPlans(stripe);
 
     const key = String(req.params.key || "").trim() as SubscriptionPlanKey;
-    if (!key || !["bronze", "silver", "gold"].includes(key)) {
+    if (!key || !VENDOR_PLAN_KEYS.includes(key)) {
       return res.status(400).json({ success: false, message: "Invalid plan key" });
     }
 

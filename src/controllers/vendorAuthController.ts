@@ -8,6 +8,7 @@ import {
   uploadImageBufferToCloudinary,
 } from "../lib/cloudinary.js";
 import { imageSize } from "image-size";
+import { buildVendorPlanSnapshot } from "../lib/vendorBilling.js";
 
 /* =====================================================
    CONFIG
@@ -256,11 +257,16 @@ export const getVendorProfile = async (req: AuthRequest, res: Response) => {
     delete (baseUser as any).emailOtpSentAt;
   }
 
+  const billing = currentUser?._id
+    ? await buildVendorPlanSnapshot(String(currentUser._id), currentUser as any)
+    : null;
+
   res.json({
     success: true,
     user: {
       ...baseUser,
       vendorStatus: normalizedStatus,
+      vendorBilling: billing,
     },
   });
 };

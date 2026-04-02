@@ -7,6 +7,11 @@ import {
 } from "../lib/cloudinary.js";
 import User from "../models/User.js";
 import { sendEmail } from "../utils/sendEmail.js";
+import {
+  countVendorPlanUsage,
+  getVendorActivePlanKey,
+  getVendorPlanDefinition,
+} from "../lib/vendorBilling.js";
 
 const ALLOWED_DAYS = new Set(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
 
@@ -64,6 +69,30 @@ export const createOffer = async (req: AuthRequest, res: Response) => {
         success: false,
         message: "Please subscribe to a plan before creating offers",
         code: "SUBSCRIPTION_REQUIRED",
+      });
+    }
+
+    const activePlanKey = getVendorActivePlanKey(req.user as any);
+    if (!activePlanKey) {
+      return res.status(403).json({
+        success: false,
+        message: "An active subscription plan is required to create offers",
+        code: "SUBSCRIPTION_REQUIRED",
+      });
+    }
+
+    const activePlan = getVendorPlanDefinition(activePlanKey);
+    const usage = await countVendorPlanUsage(String(req.user._id));
+    const offerLimit = activePlan.limits.activeOfferLimit;
+
+    if (offerLimit !== null && usage.occupiedOfferCount >= offerLimit) {
+      return res.status(409).json({
+        success: false,
+        code: "PLAN_LIMIT_REACHED",
+        message: `Your ${activePlan.name} plan allows up to ${offerLimit} active or pending offers. Upgrade your plan or remove an existing offer to continue.`,
+        planKey: activePlan.key,
+        limit: offerLimit,
+        currentUsage: usage.occupiedOfferCount,
       });
     }
 

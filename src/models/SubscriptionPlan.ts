@@ -1,12 +1,12 @@
 import mongoose, { type InferSchemaType } from "mongoose";
 
-export type SubscriptionPlanKey = "bronze" | "silver" | "gold";
+export type SubscriptionPlanKey = "bronze" | "silver" | "gold" | "diamond";
 
 const subscriptionPlanSchema = new mongoose.Schema(
   {
     key: {
       type: String,
-      enum: ["bronze", "silver", "gold"],
+      enum: ["bronze", "silver", "gold", "diamond"],
       required: true,
       unique: true,
     },
