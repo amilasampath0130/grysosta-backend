@@ -5,11 +5,12 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
   const from =
     process.env.EMAIL_FROM?.trim() ||
     process.env.SENDGRID_FROM_EMAIL?.trim() ||
+    process.env.EMAIL_USER?.trim() ||
     "";
 
   if (!apiKey || !from) {
     throw new Error(
-      "SendGrid configuration missing: set SENDGRID_API_KEY and EMAIL_FROM in environment",
+      "SendGrid configuration missing: set SENDGRID_API_KEY and EMAIL_FROM (or SENDGRID_FROM_EMAIL / EMAIL_USER) in environment",
     );
   }
 
