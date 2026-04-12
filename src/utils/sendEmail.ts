@@ -22,15 +22,31 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
   // Optional verification to surface credential/config errors early
   try {
     await transporter.verify();
+    console.info("[EMAIL VERIFY SUCCESS]", { to, subject });
   } catch (err) {
-    console.error("Email transport verify failed:", err);
+    console.error("[EMAIL VERIFY ERROR]", {
+      to,
+      subject,
+      error: err,
+    });
     throw err;
   }
 
-  await transporter.sendMail({
-    from: `"Admin Security" <${user}>`,
-    to,
-    subject,
-    html,
-  });
+  try {
+    await transporter.sendMail({
+      from: `"Admin Security" <${user}>`,
+      to,
+      subject,
+      html,
+    });
+
+    console.info("[EMAIL SEND SUCCESS]", { to, subject });
+  } catch (err) {
+    console.error("[EMAIL SEND ERROR]", {
+      to,
+      subject,
+      error: err,
+    });
+    throw err;
+  }
 };

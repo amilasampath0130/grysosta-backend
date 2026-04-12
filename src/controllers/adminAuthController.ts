@@ -5,98 +5,151 @@ import { sendEmail } from "../utils/sendEmail.js";
 import { AuthRequest, generateToken } from "./authController.js";
 import bcrypt from "bcryptjs";
 
+interface LoginRequestBody {
+  email: string;
+  password: string;
+}
+
+interface OtpRequestBody {
+  email: string;
+  otp: string;
+}
+
+const logError = (
+  label: string,
+  error: unknown,
+  metadata?: Record<string, unknown>,
+): void => {
+  console.error(`[${label}]`, {
+    ...metadata,
+    error,
+  });
+};
+
+const sendAdminOtpEmail = async (email: string, otp: string): Promise<void> => {
+  try {
+    await sendEmail(
+      email,
+      "Admin Verification Code",
+      `<h2>Your admin verification code</h2>
+       <h1>${otp}</h1>
+       <p>Expires in 5 minutes</p>`,
+    );
+
+    console.info("[LOGIN EMAIL SENT]", { email });
+  } catch (error) {
+    logError("LOGIN EMAIL ERROR", error, { email });
+    throw error;
+  }
+};
+
 // ================= ADMIN LOGIN =================
 export const adminLogin = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body as LoginRequestBody;
 
-  const user = await User.findOne({ email, role: "admin" });
-  if (!user) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid credentials" });
-  }
-
-  const isMatch = await user.comparePassword(password);
-  if (!isMatch) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid credentials" });
-  }
-
-  // Enforce resend cooldown (30 minutes)
-  const COOLDOWN_MINUTES = 30;
-  if (user.adminOtpSentAt) {
-    const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
-    if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
-      const minutesLeft = Math.ceil(
-        (COOLDOWN_MINUTES * 60 * 1000 - elapsed) / (60 * 1000),
-      );
-      return res.status(429).json({
-        success: false,
-        message: `OTP already sent. Try again in ${minutesLeft} minute(s).`,
-      });
+    const user = await User.findOne({ email, role: "admin" });
+    if (!user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
+
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
+
+    // Enforce resend cooldown (30 minutes)
+    const COOLDOWN_MINUTES = 30;
+    if (user.adminOtpSentAt) {
+      const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
+      if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
+        const minutesLeft = Math.ceil(
+          (COOLDOWN_MINUTES * 60 * 1000 - elapsed) / (60 * 1000),
+        );
+        return res.status(429).json({
+          success: false,
+          message: `OTP already sent. Try again in ${minutesLeft} minute(s).`,
+        });
+      }
+    }
+
+    const otp = generateOtp();
+    user.adminOtp = await bcrypt.hash(otp, 10);
+    user.adminOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
+    user.adminOtpSentAt = new Date();
+
+    await user.save();
+
+    await sendAdminOtpEmail(user.email, otp);
+
+    return res.json({
+      success: true,
+      message: "Verification code sent to email",
+    });
+  } catch (error) {
+    const email = (req.body as Partial<LoginRequestBody>)?.email;
+    logError("LOGIN ERROR", error, { email, route: "adminLogin" });
+
+    return res.status(500).json({
+      success: false,
+      message: "Something went wrong",
+    });
   }
-
-  // 🔐 Generate OTP
-  const otp = generateOtp();
-  user.adminOtp = await bcrypt.hash(otp, 10);
-  user.adminOtpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 min
-  user.adminOtpSentAt = new Date();
-
-  await user.save();
-
-  // 📧 Send Email
-  await sendEmail(
-    user.email,
-    "Admin Verification Code",
-    `<h2>Your admin verification code</h2>
-     <h1>${otp}</h1>
-     <p>Expires in 5 minutes</p>`,
-  );
-
-  res.json({
-    success: true,
-    message: "Verification code sent to email",
-  });
 };
 
 // ================= RESEND ADMIN OTP (no password) =================
 export const resendAdminOtp = async (req: Request, res: Response) => {
-  const { email } = req.body;
-  if (!email)
-    return res.status(400).json({ success: false, message: "Email required" });
-
-  const user = await User.findOne({ email, role: "admin" });
-  if (!user)
-    return res.status(404).json({ success: false, message: "User not found" });
-
-  const COOLDOWN_MINUTES = 1;
-  if (user.adminOtpSentAt) {
-    const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
-    if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
-      const msLeft = COOLDOWN_MINUTES * 60 * 1000 - elapsed;
+  try {
+    const { email } = req.body as Pick<LoginRequestBody, "email">;
+    if (!email) {
       return res
-        .status(429)
-        .json({ success: false, message: `OTP already sent`, msLeft });
+        .status(400)
+        .json({ success: false, message: "Email required" });
     }
+
+    const user = await User.findOne({ email, role: "admin" });
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const COOLDOWN_MINUTES = 1;
+    if (user.adminOtpSentAt) {
+      const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
+      if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
+        const msLeft = COOLDOWN_MINUTES * 60 * 1000 - elapsed;
+        return res
+          .status(429)
+          .json({ success: false, message: `OTP already sent`, msLeft });
+      }
+    }
+
+    const otp = generateOtp();
+    user.adminOtp = await bcrypt.hash(otp, 10);
+    user.adminOtpExpires = new Date(Date.now() + 60 * 1000);
+    user.adminOtpSentAt = new Date();
+    await user.save();
+
+    await sendAdminOtpEmail(user.email, otp);
+
+    return res.json({
+      success: true,
+      message: "Verification code sent to email",
+    });
+  } catch (error) {
+    const email = (req.body as Partial<LoginRequestBody>)?.email;
+    logError("RESEND OTP ERROR", error, { email, route: "resendAdminOtp" });
+
+    return res.status(500).json({
+        success: false,
+      message: "Something went wrong",
+    });
   }
-
-  const otp = generateOtp();
-  user.adminOtp = await bcrypt.hash(otp, 10);
-  user.adminOtpExpires = new Date(Date.now() + 60 * 1000); // 1 min
-  user.adminOtpSentAt = new Date();
-  await user.save();
-
-  await sendEmail(
-    user.email,
-    "Admin Verification Code",
-    `<h2>Your admin verification code</h2>
-     <h1>${otp}</h1>
-     <p>Expires in 5 minutes</p>`,
-  );
-
-  res.json({ success: true, message: "Verification code sent to email" });
 };
 
 // ================= ADMIN OTP STATUS =================
@@ -197,7 +250,7 @@ export const deleteVendor = async (req: AuthRequest, res: Response) => {
 
 // ================= VERIFY ADMIN OTP =================
 export const verifyAdminOtp = async (req: Request, res: Response) => {
-  const { email, otp } = req.body;
+  const { email, otp } = req.body as OtpRequestBody;
 
   const user = await User.findOne({ email, role: "admin" });
   if (!user || !user.adminOtp || !user.adminOtpExpires) {
