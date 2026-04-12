@@ -9,14 +9,35 @@ import {
 } from "../lib/cloudinary.js";
 import { imageSize } from "image-size";
 import { buildVendorPlanSnapshot } from "../lib/vendorBilling.js";
+import {
+  OTP_EXPIRY_MS,
+  assignOtpToUser,
+  clearOtpFromUser,
+  formatOtpDelay,
+  getOtpMsLeft,
+  remainingOtpAttempts,
+} from "../lib/otpPolicy.js";
 
 /* =====================================================
    CONFIG
 ===================================================== */
 
-const OTP_EXPIRY_MINUTES = 5;
-const OTP_COOLDOWN_MINUTES = 1;
 const VENDOR_SESSION_MINUTES = 30;
+
+const buildOtpCooldownPayload = (user: {
+  adminOtpSentAt?: Date;
+  adminOtpSendCount?: number;
+  adminOtpFailedAttempts?: number;
+}) => {
+  const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+
+  return {
+    success: false,
+    message: `OTP already sent. Try again in ${formatOtpDelay(msLeft)}.`,
+    msLeft,
+    remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+  };
+};
 
 /* =====================================================
    VENDOR LOGIN (PASSWORD → OTP)
@@ -74,22 +95,14 @@ export const vendorLogin = async (req: Request, res: Response) => {
         .json({ success: false, message: "Invalid email or password" });
     }
 
-    if (user.adminOtpSentAt) {
-      const elapsed = Date.now() - user.adminOtpSentAt.getTime();
-      if (elapsed < OTP_COOLDOWN_MINUTES * 60 * 1000) {
-        const msLeft = OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed;
-        return res.status(429).json({
-          success: false,
-          message: "OTP already sent",
-          msLeft,
-        });
-      }
+    const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+    if (msLeft > 0) {
+      return res.status(429).json(buildOtpCooldownPayload(user));
     }
 
     const otp = generateOtp();
-    user.adminOtp = await bcrypt.hash(otp, 10);
-    user.adminOtpExpires = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-    user.adminOtpSentAt = new Date();
+    const hashedOtp = await bcrypt.hash(otp, 10);
+    assignOtpToUser(user, hashedOtp);
     await user.save();
 
     await sendEmail(
@@ -97,10 +110,15 @@ export const vendorLogin = async (req: Request, res: Response) => {
       "Vendor Login Verification",
       `<h2>Your vendor login code</h2>
        <h1>${otp}</h1>
-       <p>Expires in ${OTP_EXPIRY_MINUTES} minutes</p>`,
+       <p>Expires in ${Math.floor(OTP_EXPIRY_MS / (60 * 1000))} minutes</p>`,
     );
 
-    return res.json({ success: true, message: "Verification code sent" });
+    return res.json({
+      success: true,
+      message: "Verification code sent",
+      msLeft: getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount),
+      remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+    });
   } catch (error) {
     console.error("vendorLogin failed:", error);
     return res.status(500).json({
@@ -126,21 +144,14 @@ export const resendVendorOtp = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    if (user.adminOtpSentAt) {
-      const elapsed = Date.now() - user.adminOtpSentAt.getTime();
-      if (elapsed < OTP_COOLDOWN_MINUTES * 60 * 1000) {
-        return res.status(429).json({
-          success: false,
-          message: "OTP already sent",
-          msLeft: OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed,
-        });
-      }
+    const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+    if (msLeft > 0) {
+      return res.status(429).json(buildOtpCooldownPayload(user));
     }
 
     const otp = generateOtp();
-    user.adminOtp = await bcrypt.hash(otp, 10);
-    user.adminOtpExpires = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-    user.adminOtpSentAt = new Date();
+    const hashedOtp = await bcrypt.hash(otp, 10);
+    assignOtpToUser(user, hashedOtp);
     await user.save();
 
     await sendEmail(
@@ -148,10 +159,15 @@ export const resendVendorOtp = async (req: Request, res: Response) => {
       "Vendor Login Verification",
       `<h2>Your vendor login code</h2>
        <h1>${otp}</h1>
-       <p>Expires in ${OTP_EXPIRY_MINUTES} minutes</p>`,
+       <p>Expires in ${Math.floor(OTP_EXPIRY_MS / (60 * 1000))} minutes</p>`,
     );
 
-    return res.json({ success: true, message: "Verification code resent" });
+    return res.json({
+      success: true,
+      message: "Verification code resent",
+      msLeft: getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount),
+      remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+    });
   } catch (error) {
     console.error("resendVendorOtp failed:", error);
     return res.status(500).json({
@@ -179,10 +195,14 @@ export const vendorOtpStatus = async (req: Request, res: Response) => {
     return res.json({ success: true, canResend: true, msLeft: 0 });
   }
 
-  const elapsed = Date.now() - user.adminOtpSentAt.getTime();
-  const msLeft = Math.max(0, OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed);
+  const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
 
-  res.json({ success: true, canResend: msLeft === 0, msLeft });
+  res.json({
+    success: true,
+    canResend: msLeft === 0,
+    msLeft,
+    remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+  });
 };
 
 /* =====================================================
@@ -201,20 +221,38 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
   }
 
   if (user.adminOtpExpires < new Date()) {
+    clearOtpFromUser(user);
+    await user.save();
     return res.status(400).json({ success: false, message: "OTP expired" });
   }
 
   const valid = await bcrypt.compare(otp, user.adminOtp);
   if (!valid) {
-    return res.status(400).json({ success: false, message: "Invalid OTP" });
+    user.adminOtpFailedAttempts = (Number(user.adminOtpFailedAttempts) || 0) + 1;
+    const attemptsLeft = remainingOtpAttempts(user.adminOtpFailedAttempts);
+
+    if (attemptsLeft === 0) {
+      clearOtpFromUser(user);
+      await user.save();
+      return res.status(400).json({
+        success: false,
+        message: "Invalid OTP. Maximum attempts reached. Please request a new code.",
+        remainingAttempts: 0,
+      });
+    }
+
+    await user.save();
+    return res.status(400).json({
+      success: false,
+      message: `Invalid OTP. ${attemptsLeft} attempt(s) remaining.`,
+      remainingAttempts: attemptsLeft,
+    });
   }
 
-  // Clear OTP atomically to avoid potential validation/save issues
+  clearOtpFromUser(user);
+
   try {
-    await User.updateOne(
-      { _id: user._id },
-      { $unset: { adminOtp: "", adminOtpExpires: "", adminOtpSentAt: "" } },
-    );
+    await user.save();
   } catch (err) {
     console.error("Vendor OTP clear error:", err);
     return res.status(500).json({

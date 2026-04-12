@@ -4,6 +4,14 @@ import { generateOtp } from "../utils/generateOtp.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { AuthRequest, generateToken } from "./authController.js";
 import bcrypt from "bcryptjs";
+import {
+  OTP_EXPIRY_MS,
+  assignOtpToUser,
+  clearOtpFromUser,
+  formatOtpDelay,
+  getOtpMsLeft,
+  remainingOtpAttempts,
+} from "../lib/otpPolicy.js";
 
 interface LoginRequestBody {
   email: string;
@@ -13,6 +21,10 @@ interface LoginRequestBody {
 interface OtpRequestBody {
   email: string;
   otp: string;
+}
+
+interface VerifyAdminOtpResponse {
+  token: string;
 }
 
 const logError = (
@@ -33,7 +45,7 @@ const sendAdminOtpEmail = async (email: string, otp: string): Promise<void> => {
       "Admin Verification Code",
       `<h2>Your admin verification code</h2>
        <h1>${otp}</h1>
-       <p>Expires in 5 minutes</p>`,
+       <p>Expires in ${Math.floor(OTP_EXPIRY_MS / (60 * 1000))} minutes</p>`,
     );
 
     console.info("[LOGIN EMAIL SENT]", { email });
@@ -41,6 +53,17 @@ const sendAdminOtpEmail = async (email: string, otp: string): Promise<void> => {
     logError("LOGIN EMAIL ERROR", error, { email });
     throw error;
   }
+};
+
+const buildOtpCooldownResponse = (res: Response, user: IUser) => {
+  const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+
+  return res.status(429).json({
+    success: false,
+    message: `OTP already sent. Try again in ${formatOtpDelay(msLeft)}.`,
+    msLeft,
+    remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+  });
 };
 
 // ================= ADMIN LOGIN =================
@@ -68,223 +91,227 @@ export const adminLogin = async (req: Request, res: Response) => {
       const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
       if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
         const minutesLeft = Math.ceil(
-          (COOLDOWN_MINUTES * 60 * 1000 - elapsed) / (60 * 1000),
-        );
-        return res.status(429).json({
-          success: false,
-          message: `OTP already sent. Try again in ${minutesLeft} minute(s).`,
+          const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+          if (msLeft > 0) {
+            return buildOtpCooldownResponse(res, user);
+          }
+
+          const otp = generateOtp();
+          const hashedOtp = await bcrypt.hash(otp, 10);
+          assignOtpToUser(user, hashedOtp);
+
+          await user.save();
+
+          await sendAdminOtpEmail(user.email, otp);
+
+          return res.json({
+            success: true,
+            message: "Verification code sent to email",
+            msLeft: getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount),
+            remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+          });
+        } catch (error) {
+          const email = (req.body as Partial<LoginRequestBody>)?.email;
+          logError("LOGIN ERROR", error, { email, route: "adminLogin" });
+
+          return res.status(500).json({
+            success: false,
+            message: "Something went wrong",
+          });
+        }
+      };
+
+      // ================= RESEND ADMIN OTP (no password) =================
+      export const resendAdminOtp = async (req: Request, res: Response) => {
+        try {
+          const { email } = req.body as Pick<LoginRequestBody, "email">;
+          if (!email) {
+            return res
+              .status(400)
+              .json({ success: false, message: "Email required" });
+          }
+
+          const user = await User.findOne({ email, role: "admin" });
+          if (!user) {
+            return res
+              .status(404)
+              .json({ success: false, message: "User not found" });
+          }
+
+          const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+          if (msLeft > 0) {
+            return buildOtpCooldownResponse(res, user);
+          }
+
+          const otp = generateOtp();
+          const hashedOtp = await bcrypt.hash(otp, 10);
+          assignOtpToUser(user, hashedOtp);
+          await user.save();
+
+          await sendAdminOtpEmail(user.email, otp);
+
+          return res.json({
+            success: true,
+            message: "Verification code sent to email",
+            msLeft: getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount),
+            remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
+          });
+        } catch (error) {
+          const email = (req.body as Partial<LoginRequestBody>)?.email;
+          logError("RESEND OTP ERROR", error, { email, route: "resendAdminOtp" });
+
+          return res.status(500).json({
+            success: false,
+            message: "Something went wrong",
+          });
+        }
+      };
+
+      // ================= ADMIN OTP STATUS =================
+      export const adminOtpStatus = async (req: Request, res: Response) => {
+        const email = (req.query.email as string) || "";
+        if (!email)
+          return res.status(400).json({ success: false, message: "Email required" });
+
+        const user = await User.findOne({ email, role: "admin" });
+        if (!user)
+          return res.status(404).json({ success: false, message: "User not found" });
+
+        const msLeft = getOtpMsLeft(user.adminOtpSentAt, user.adminOtpSendCount);
+
+        return res.json({
+          success: true,
+          canResend: msLeft === 0,
+          msLeft,
+          remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
         });
-      }
-    }
+      };
 
-    const otp = generateOtp();
-    user.adminOtp = await bcrypt.hash(otp, 10);
-    user.adminOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
-    user.adminOtpSentAt = new Date();
+      // ================= ADMIN PROFILE =================
 
-    await user.save();
+      export const getAdminProfile = async (req: AuthRequest, res: Response) => {
+        res.json({
+          success: true,
+          user: req.user,
+        });
+      };
 
-    await sendAdminOtpEmail(user.email, otp);
+      // ================= GET ALL USERS =================
+      export const getAllUsers = async (req: AuthRequest, res: Response) => {
+        try {
+          const users = await User.find().select("-password"); // 🔒 exclude password
 
-    return res.json({
-      success: true,
-      message: "Verification code sent to email",
-    });
-  } catch (error) {
-    const email = (req.body as Partial<LoginRequestBody>)?.email;
-    logError("LOGIN ERROR", error, { email, route: "adminLogin" });
+          res.status(200).json({
+            success: true,
+            count: users.length,
+            users,
+          });
+        } catch (error) {
+          res.status(500).json({
+            success: false,
+            message: "Failed to fetch users",
+          });
+        }
+      };
 
-    return res.status(500).json({
-      success: false,
-      message: "Something went wrong",
-    });
-  }
-};
+      // ================= DELETE USER (ADMIN ONLY) =================
+      export const deleteUser = async (req: AuthRequest, res: Response) => {
+        try {
+          const user = await User.findById(req.params.userId);
+          if (!user) {
+            return res
+              .status(404)
+              .json({ success: false, message: "User not found" });
+          }
 
-// ================= RESEND ADMIN OTP (no password) =================
-export const resendAdminOtp = async (req: Request, res: Response) => {
-  try {
-    const { email } = req.body as Pick<LoginRequestBody, "email">;
-    if (!email) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Email required" });
-    }
+          if (user.role === "admin") {
+            return res
+              .status(403)
+              .json({ success: false, message: "Cannot delete admin account" });
+          }
 
-    const user = await User.findOne({ email, role: "admin" });
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
+          await User.deleteOne({ _id: user._id });
+          return res.json({ success: true, message: "User deleted" });
+        } catch (error) {
+          return res
+            .status(500)
+            .json({ success: false, message: "Failed to delete user" });
+        }
+      };
 
-    const COOLDOWN_MINUTES = 1;
-    if (user.adminOtpSentAt) {
-      const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
-      if (elapsed < COOLDOWN_MINUTES * 60 * 1000) {
-        const msLeft = COOLDOWN_MINUTES * 60 * 1000 - elapsed;
-        return res
-          .status(429)
-          .json({ success: false, message: `OTP already sent`, msLeft });
-      }
-    }
+      // ================= DELETE VENDOR (ADMIN ONLY) =================
+      export const deleteVendor = async (req: AuthRequest, res: Response) => {
+        try {
+          const vendor = await User.findById(req.params.vendorId);
+          if (!vendor) {
+            return res
+              .status(404)
+              .json({ success: false, message: "Vendor not found" });
+          }
 
-    const otp = generateOtp();
-    user.adminOtp = await bcrypt.hash(otp, 10);
-    user.adminOtpExpires = new Date(Date.now() + 60 * 1000);
-    user.adminOtpSentAt = new Date();
-    await user.save();
+          if (vendor.role !== "vendor" && vendor.vendorStatus !== "PENDING") {
+            return res
+              .status(400)
+              .json({ success: false, message: "Target is not a vendor" });
+          }
 
-    await sendAdminOtpEmail(user.email, otp);
+          await User.deleteOne({ _id: vendor._id });
+          return res.json({ success: true, message: "Vendor deleted" });
+        } catch (error) {
+          return res
+            .status(500)
+            .json({ success: false, message: "Failed to delete vendor" });
+        }
+      };
 
-    return res.json({
-      success: true,
-      message: "Verification code sent to email",
-    });
-  } catch (error) {
-    const email = (req.body as Partial<LoginRequestBody>)?.email;
-    logError("RESEND OTP ERROR", error, { email, route: "resendAdminOtp" });
+      // ================= VERIFY ADMIN OTP =================
+      export const verifyAdminOtp = async (req: Request, res: Response) => {
+        const { email, otp } = req.body as OtpRequestBody;
 
-    return res.status(500).json({
-        success: false,
-      message: "Something went wrong",
-    });
-  }
-};
+        const user = await User.findOne({ email, role: "admin" });
+        if (!user || !user.adminOtp || !user.adminOtpExpires) {
+          return res.status(400).json({ success: false, message: "Invalid request" });
+        }
 
-// ================= ADMIN OTP STATUS =================
-export const adminOtpStatus = async (req: Request, res: Response) => {
-  const email = (req.query.email as string) || "";
-  if (!email)
-    return res.status(400).json({ success: false, message: "Email required" });
+        if (user.adminOtpExpires < new Date()) {
+          clearOtpFromUser(user);
+          await user.save();
+          return res.status(400).json({ success: false, message: "OTP expired" });
+        }
 
-  const user = await User.findOne({ email, role: "admin" });
-  if (!user)
-    return res.status(404).json({ success: false, message: "User not found" });
+        const isValid = await bcrypt.compare(otp, user.adminOtp);
+        if (!isValid) {
+          user.adminOtpFailedAttempts = (Number(user.adminOtpFailedAttempts) || 0) + 1;
 
-  const COOLDOWN_MINUTES = 1;
-  if (!user.adminOtpSentAt)
-    return res.json({ success: true, canResend: true, msLeft: 0 });
+          const attemptsLeft = remainingOtpAttempts(user.adminOtpFailedAttempts);
+          if (attemptsLeft === 0) {
+            clearOtpFromUser(user);
+            await user.save();
+            return res.status(400).json({
+              success: false,
+              message: "Invalid OTP. Maximum attempts reached. Please request a new code.",
+              remainingAttempts: 0,
+            });
+          }
 
-  const elapsed = Date.now() - new Date(user.adminOtpSentAt).getTime();
-  const msLeft = Math.max(0, COOLDOWN_MINUTES * 60 * 1000 - elapsed);
-  res.json({ success: true, canResend: msLeft === 0, msLeft });
-};
+          await user.save();
+          return res.status(400).json({
+            success: false,
+            message: `Invalid OTP. ${attemptsLeft} attempt(s) remaining.`,
+            remainingAttempts: attemptsLeft,
+          });
+        }
 
-// ================= ADMIN PROFILE =================
+        clearOtpFromUser(user);
+        await user.save();
 
-export const getAdminProfile = async (req: AuthRequest, res: Response) => {
-  res.json({
-    success: true,
-    user: req.user,
-  });
-};
+        const token = generateToken(user._id.toString(), user.role);
 
-// ================= GET ALL USERS =================
-export const getAllUsers = async (req: AuthRequest, res: Response) => {
-  try {
-    const users = await User.find().select("-password"); // 🔒 exclude password
-
-    res.status(200).json({
-      success: true,
-      count: users.length,
-      users,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch users",
-    });
-  }
-};
-
-// ================= DELETE USER (ADMIN ONLY) =================
-export const deleteUser = async (req: AuthRequest, res: Response) => {
-  try {
-    const user = await User.findById(req.params.userId);
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    if (user.role === "admin") {
-      return res
-        .status(403)
-        .json({ success: false, message: "Cannot delete admin account" });
-    }
-
-    await User.deleteOne({ _id: user._id });
-    return res.json({ success: true, message: "User deleted" });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to delete user" });
-  }
-};
-
-// ================= DELETE VENDOR (ADMIN ONLY) =================
-export const deleteVendor = async (req: AuthRequest, res: Response) => {
-  try {
-    const vendor = await User.findById(req.params.vendorId);
-    if (!vendor) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Vendor not found" });
-    }
-
-    if (vendor.role !== "vendor" && vendor.vendorStatus !== "PENDING") {
-      return res
-        .status(400)
-        .json({ success: false, message: "Target is not a vendor" });
-    }
-
-    await User.deleteOne({ _id: vendor._id });
-    return res.json({ success: true, message: "Vendor deleted" });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to delete vendor" });
-  }
-};
-
-// ================= VERIFY ADMIN OTP =================
-export const verifyAdminOtp = async (req: Request, res: Response) => {
-  const { email, otp } = req.body as OtpRequestBody;
-
-  const user = await User.findOne({ email, role: "admin" });
-  if (!user || !user.adminOtp || !user.adminOtpExpires) {
-    return res.status(400).json({ success: false, message: "Invalid request" });
-  }
-
-  if (user.adminOtpExpires < new Date()) {
-    return res.status(400).json({ success: false, message: "OTP expired" });
-  }
-
-  const isValid = await bcrypt.compare(otp, user.adminOtp);
-  if (!isValid) {
-    return res.status(400).json({ success: false, message: "Invalid OTP" });
-  }
-
-  // ✅ Clear OTP
-  user.adminOtp = undefined;
-  user.adminOtpExpires = undefined;
-  user.adminOtpSentAt = undefined;
-  await user.save();
-
-  // 🔐 FINAL JWT
-  const token = generateToken(user._id.toString(), user.role);
-
-  res.json({
-    success: true,
-    data: { token },
-  });
-};
-
-// ================= GET ALL ADMINS =================
-export const getAllAdmins = async (req: AuthRequest, res: Response) => {
-  try {
-    const admins = await User.find({ role: "admin" }).select(
+        return res.json({
+          success: true,
+          data: { token } satisfies VerifyAdminOtpResponse,
+        });
+      };
       "name email createdAt",
     );
     res.json({ success: true, admins });

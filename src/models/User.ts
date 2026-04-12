@@ -27,6 +27,8 @@ export interface IUser {
   adminOtp?: string;
   adminOtpExpires?: Date;
   adminOtpSentAt?: Date;
+  adminOtpSendCount?: number;
+  adminOtpFailedAttempts?: number;
 
   // Email OTP (registration verification)
   emailOtp?: string;
@@ -240,6 +242,8 @@ const userSchema = new mongoose.Schema<IUser>(
     adminOtp: { type: String },
     adminOtpExpires: { type: Date },
     adminOtpSentAt: { type: Date },
+    adminOtpSendCount: { type: Number },
+    adminOtpFailedAttempts: { type: Number },
 
     // Email OTP
     emailOtp: { type: String },
