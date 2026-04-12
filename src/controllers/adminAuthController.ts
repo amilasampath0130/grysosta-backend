@@ -162,7 +162,7 @@ export const adminOtpStatus = async (req: Request, res: Response) => {
   if (!user)
     return res.status(404).json({ success: false, message: "User not found" });
 
-  const COOLDOWN_MINUTES = 30;
+  const COOLDOWN_MINUTES = 1;
   if (!user.adminOtpSentAt)
     return res.json({ success: true, canResend: true, msLeft: 0 });
 

@@ -23,94 +23,92 @@ const VENDOR_SESSION_MINUTES = 30;
 ===================================================== */
 
 export const vendorLogin = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  if (!email || !password) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Email and password required" });
-  }
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Email and password required" });
+    }
 
-  const user = await User.findOne({ email });
-  if (!user) {
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid credentials" });
-  }
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
 
-  // // Debug: log key user flags to help diagnose login issues
-  // console.debug("vendorLogin: user found", {
-  //   email: user.email,
-  //   role: user.role,
-  //   vendorStatus: user.vendorStatus,
-  //   isVerified: user.isVerified,
-  //   hasPassword: !!user.password,
-  // });
+    // Allow mobile users and vendors to start vendor onboarding (but not admins).
+    if (user.role === "admin") {
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
+    }
 
-  // Allow mobile users and vendors to start vendor onboarding (but not admins).
-  if (user.role === "admin") {
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid credentials" });
-  }
-
-  // Explicitly block rejected vendor applications
-  if (user.vendorStatus === "REJECTED") {
-    return res.status(403).json({
-      success: false,
-      message: "Vendor account rejected",
-      vendorStatus: "REJECTED",
-      canResubmit: true,
-      rejectionReason: user.vendorRejectionReason || null,
-    });
-  }
-
-  if (!user.isVerified) {
-    return res.status(403).json({
-      success: false,
-      message: "Account not verified",
-    });
-  }
-
-  const isMatch = user.vendorDashboardPassword
-    ? await user.compareVendorDashboardPassword(password)
-    : await user.comparePassword(password);
-  if (!isMatch) {
-    console.debug("vendorLogin: password mismatch for", user.email);
-    return res
-      .status(401)
-      .json({ success: false, message: "Invalid email or password" });
-  }
-
-  // ⏱ Cooldown
-  if (user.adminOtpSentAt) {
-    const elapsed = Date.now() - user.adminOtpSentAt.getTime();
-    if (elapsed < OTP_COOLDOWN_MINUTES * 60 * 1000) {
-      const msLeft = OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed;
-      return res.status(429).json({
+    // Explicitly block rejected vendor applications
+    if (user.vendorStatus === "REJECTED") {
+      return res.status(403).json({
         success: false,
-        message: "OTP already sent",
-        msLeft,
+        message: "Vendor account rejected",
+        vendorStatus: "REJECTED",
+        canResubmit: true,
+        rejectionReason: user.vendorRejectionReason || null,
       });
     }
+
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Account not verified",
+      });
+    }
+
+    const isMatch = user.vendorDashboardPassword
+      ? await user.compareVendorDashboardPassword(password)
+      : await user.comparePassword(password);
+    if (!isMatch) {
+      console.debug("vendorLogin: password mismatch for", user.email);
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid email or password" });
+    }
+
+    if (user.adminOtpSentAt) {
+      const elapsed = Date.now() - user.adminOtpSentAt.getTime();
+      if (elapsed < OTP_COOLDOWN_MINUTES * 60 * 1000) {
+        const msLeft = OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed;
+        return res.status(429).json({
+          success: false,
+          message: "OTP already sent",
+          msLeft,
+        });
+      }
+    }
+
+    const otp = generateOtp();
+    user.adminOtp = await bcrypt.hash(otp, 10);
+    user.adminOtpExpires = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    user.adminOtpSentAt = new Date();
+    await user.save();
+
+    await sendEmail(
+      user.email,
+      "Vendor Login Verification",
+      `<h2>Your vendor login code</h2>
+       <h1>${otp}</h1>
+       <p>Expires in ${OTP_EXPIRY_MINUTES} minutes</p>`,
+    );
+
+    return res.json({ success: true, message: "Verification code sent" });
+  } catch (error) {
+    console.error("vendorLogin failed:", error);
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to send verification code. Check the backend email configuration.",
+    });
   }
-
-  // 🔐 Generate OTP
-  const otp = generateOtp();
-  user.adminOtp = await bcrypt.hash(otp, 10);
-  user.adminOtpExpires = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-  user.adminOtpSentAt = new Date();
-  await user.save();
-
-  await sendEmail(
-    user.email,
-    "Vendor Login Verification",
-    `<h2>Your vendor login code</h2>
-     <h1>${otp}</h1>
-     <p>Expires in ${OTP_EXPIRY_MINUTES} minutes</p>`,
-  );
-
-  res.json({ success: true, message: "Verification code sent" });
 };
 
 /* =====================================================
@@ -118,41 +116,50 @@ export const vendorLogin = async (req: Request, res: Response) => {
 ===================================================== */
 
 export const resendVendorOtp = async (req: Request, res: Response) => {
-  const { email } = req.body;
-  if (!email)
-    return res.status(400).json({ success: false, message: "Email required" });
+  try {
+    const { email } = req.body;
+    if (!email)
+      return res.status(400).json({ success: false, message: "Email required" });
 
-  const user = await User.findOne({ email });
-  if (!user) {
-    return res.status(404).json({ success: false, message: "User not found" });
-  }
-
-  if (user.adminOtpSentAt) {
-    const elapsed = Date.now() - user.adminOtpSentAt.getTime();
-    if (elapsed < OTP_COOLDOWN_MINUTES * 60 * 1000) {
-      return res.status(429).json({
-        success: false,
-        message: "OTP already sent",
-        msLeft: OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed,
-      });
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
     }
+
+    if (user.adminOtpSentAt) {
+      const elapsed = Date.now() - user.adminOtpSentAt.getTime();
+      if (elapsed < OTP_COOLDOWN_MINUTES * 60 * 1000) {
+        return res.status(429).json({
+          success: false,
+          message: "OTP already sent",
+          msLeft: OTP_COOLDOWN_MINUTES * 60 * 1000 - elapsed,
+        });
+      }
+    }
+
+    const otp = generateOtp();
+    user.adminOtp = await bcrypt.hash(otp, 10);
+    user.adminOtpExpires = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+    user.adminOtpSentAt = new Date();
+    await user.save();
+
+    await sendEmail(
+      user.email,
+      "Vendor Login Verification",
+      `<h2>Your vendor login code</h2>
+       <h1>${otp}</h1>
+       <p>Expires in ${OTP_EXPIRY_MINUTES} minutes</p>`,
+    );
+
+    return res.json({ success: true, message: "Verification code resent" });
+  } catch (error) {
+    console.error("resendVendorOtp failed:", error);
+    return res.status(500).json({
+      success: false,
+      message:
+        "Failed to send verification code. Check the backend email configuration.",
+    });
   }
-
-  const otp = generateOtp();
-  user.adminOtp = await bcrypt.hash(otp, 10);
-  user.adminOtpExpires = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
-  user.adminOtpSentAt = new Date();
-  await user.save();
-
-  await sendEmail(
-    user.email,
-    "Vendor Login Verification",
-    `<h2>Your vendor login code</h2>
-     <h1>${otp}</h1>
-     <p>Expires in ${OTP_EXPIRY_MINUTES} minutes</p>`,
-  );
-
-  res.json({ success: true, message: "Verification code resent" });
 };
 
 /* =====================================================
