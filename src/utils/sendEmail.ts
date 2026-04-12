@@ -1,41 +1,24 @@
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 
 export const sendEmail = async (to: string, subject: string, html: string) => {
-  const rawUser = process.env.EMAIL_USER || "";
-  const rawPass = process.env.EMAIL_PASS || "";
+  const apiKey = process.env.SENDGRID_API_KEY?.trim() || "";
+  const from =
+    process.env.EMAIL_FROM?.trim() ||
+    process.env.SENDGRID_FROM_EMAIL?.trim() ||
+    "";
 
-  // Trim accidental whitespace (e.g., spaced app passwords)
-  const user = rawUser.trim();
-  const pass = rawPass.replace(/\s+/g, "");
-
-  if (!user || !pass) {
+  if (!apiKey || !from) {
     throw new Error(
-      "Email credentials missing: set EMAIL_USER and EMAIL_PASS in environment",
+      "SendGrid configuration missing: set SENDGRID_API_KEY and EMAIL_FROM in environment",
     );
   }
 
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: { user, pass },
-  });
-
-  // Optional verification to surface credential/config errors early
-  try {
-    await transporter.verify();
-    console.info("[EMAIL VERIFY SUCCESS]", { to, subject });
-  } catch (err) {
-    console.error("[EMAIL VERIFY ERROR]", {
-      to,
-      subject,
-      error: err,
-    });
-    throw err;
-  }
+  sgMail.setApiKey(apiKey);
 
   try {
-    await transporter.sendMail({
-      from: `"Admin Security" <${user}>`,
+    await sgMail.send({
       to,
+      from,
       subject,
       html,
     });
@@ -45,6 +28,7 @@ export const sendEmail = async (to: string, subject: string, html: string) => {
     console.error("[EMAIL SEND ERROR]", {
       to,
       subject,
+      from,
       error: err,
     });
     throw err;
