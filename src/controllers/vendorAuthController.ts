@@ -24,6 +24,43 @@ import {
 
 const VENDOR_SESSION_MINUTES = 30;
 
+const splitPossibleUrls = (value: unknown): string[] => {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+
+  return raw
+    .split(/(?=https?:\/\/)/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+};
+
+const normalizeBaseOrigin = (value: unknown): string | null => {
+  const candidates = splitPossibleUrls(value);
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      return parsed.origin;
+    } catch {
+      // Try next candidate.
+    }
+  }
+
+  return null;
+};
+
+const getVendorClientBaseUrl = (): string => {
+  const configured =
+    normalizeBaseOrigin(process.env.CLIENT_URL) ||
+    normalizeBaseOrigin(process.env.VENDOR_DASHBOARD_URL) ||
+    normalizeBaseOrigin(process.env.FRONTEND_URL);
+
+  return configured || "https://your-frontend.example.com";
+};
+
+const vendorCookieSameSite =
+  process.env.NODE_ENV === "production" ? "none" : "lax";
+
 const buildOtpCooldownPayload = (user: {
   adminOtpSentAt?: Date;
   adminOtpSendCount?: number;
@@ -270,7 +307,7 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
   res.cookie("auth-token", token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    sameSite: vendorCookieSameSite,
     maxAge: VENDOR_SESSION_MINUTES * 60 * 1000,
   });
 
@@ -325,7 +362,7 @@ export const vendorLogout = async (req: Request, res: Response) => {
     res.clearCookie("auth-token", {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: vendorCookieSameSite,
     });
     res.json({ success: true, message: "Logged out successfully" });
   } catch (error) {
@@ -394,6 +431,18 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
         return res
           .status(404)
           .json({ success: false, message: "User not found" });
+    }
+
+    if (targetUser.role === "admin") {
+      const incomingEmail = String(email || "").trim().toLowerCase();
+      const authEmail = String(targetUser.email || "").trim().toLowerCase();
+
+      if (incomingEmail && incomingEmail !== authEmail) {
+        const requestedUser = await User.findOne({ email: incomingEmail });
+        if (requestedUser) {
+          targetUser = requestedUser;
+        }
+      }
     }
 
     if (targetUser.role === "admin") {
@@ -672,6 +721,18 @@ export const saveVendorProgress = async (req: AuthRequest, res: Response) => {
     }
 
     if (targetUser.role === "admin") {
+      const incomingEmail = String(email || "").trim().toLowerCase();
+      const authEmail = String(targetUser.email || "").trim().toLowerCase();
+
+      if (incomingEmail && incomingEmail !== authEmail) {
+        const requestedUser = await User.findOne({ email: incomingEmail });
+        if (requestedUser) {
+          targetUser = requestedUser;
+        }
+      }
+    }
+
+    if (targetUser.role === "admin") {
       return res
         .status(403)
         .json({ success: false, message: "Admins cannot save vendor info" });
@@ -829,9 +890,8 @@ export const rejectVendor = async (req: AuthRequest, res: Response) => {
   await vendor.save();
 
   try {
-    const clientUrl =
-      process.env.CLIENT_URL || "https://your-frontend.example.com";
-    const onboardingLink = `${clientUrl.replace(/\/$/, "")}/vendor/onboarding`;
+    const clientBaseUrl = getVendorClientBaseUrl();
+    const onboardingLink = `${clientBaseUrl}/vendor/onboarding`;
     const reason =
       req.body.reason ||
       "Please update your details and resubmit your documents.";
