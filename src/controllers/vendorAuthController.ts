@@ -308,12 +308,12 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
 
   res.cookie("auth-token", token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
     maxAge: VENDOR_SESSION_MINUTES * 60 * 1000,
   });
 
-  res.json({ success: true, message: "Login successful" });
+  res.json({ success: true, message: "Login successful", data: { token } });
 };
 
 /* =====================================================
@@ -365,8 +365,8 @@ export const vendorLogout = async (req: Request, res: Response) => {
 
     res.clearCookie("auth-token", {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      secure: isProduction,
+      sameSite: isProduction ? "none" : "lax",
     });
     res.json({ success: true, message: "Logged out successfully" });
   } catch (error) {
