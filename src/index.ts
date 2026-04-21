@@ -10,6 +10,7 @@ import VendorRoutes from "./routes/vendorRoutes.js";
 import advertisementRoutes from "./routes/advertisementRoutes.js";
 import paymentRoutes from "./routes/payment.js";
 import offerRoutes from "./routes/offerRoutes.js";
+import solanaPaymentRoutes from "./routes/solanaPaymentRoutes.js";
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 5000;
 
@@ -33,6 +34,7 @@ app.use("/api/vendor", VendorRoutes);
 app.use("/api/advertisements", advertisementRoutes);
 app.use("/api/offers", offerRoutes);
 app.use("/api/payment", paymentRoutes);
+app.use("/api/solana", solanaPaymentRoutes);
 //for admin routes
 app.use("/api/admin", adminRoutes);
 app.get("/api/health", (req: Request, res: Response) => {
