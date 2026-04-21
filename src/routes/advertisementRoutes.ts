@@ -10,6 +10,7 @@ import {
   informAdvertisementVendor,
   listActiveAdvertisements,
   listMyAdvertisements,
+  listPublicActiveAdvertisements,
   listAdvertisementsByVendor,
   listPendingAdvertisements,
   rejectAdvertisement,
@@ -64,6 +65,9 @@ router.get(
   authorizeRoles("admin"),
   listActiveAdvertisements,
 );
+
+router.get("/public/active", listPublicActiveAdvertisements);
+
 router.post(
   "/approve/:advertisementId",
   authenticateToken,

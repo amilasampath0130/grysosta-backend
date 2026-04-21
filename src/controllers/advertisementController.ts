@@ -347,6 +347,49 @@ export const listActiveAdvertisements = async (req: AuthRequest, res: Response) 
   }
 };
 
+export const listPublicActiveAdvertisements = async (
+  _req: AuthRequest,
+  res: Response,
+) => {
+  try {
+    const now = new Date();
+
+    const advertisements = await Advertisement.find({
+      status: "APPROVED",
+      $and: [
+        { $or: [{ startDate: { $exists: false } }, { startDate: { $lte: now } }] },
+        { $or: [{ endDate: { $exists: false } }, { endDate: { $gte: now } }] },
+      ],
+    })
+      .sort({ endDate: 1, startDate: 1, createdAt: -1 })
+      .populate("vendor", "name")
+      .select("title content advertisementType startDate endDate imageUrl vendor")
+      .lean();
+
+    const normalized = advertisements.map((ad: any) => ({
+      id: String(ad._id),
+      title: ad.title,
+      content: ad.content,
+      advertisementType: ad.advertisementType,
+      imageUrl: ad.imageUrl,
+      startDate: ad.startDate ? new Date(ad.startDate).toISOString() : undefined,
+      endDate: ad.endDate ? new Date(ad.endDate).toISOString() : undefined,
+      vendorName:
+        ad?.vendor && typeof ad.vendor === "object" && typeof ad.vendor.name === "string"
+          ? ad.vendor.name
+          : "Verified Vendor",
+    }));
+
+    return res.json({ success: true, advertisements: normalized });
+  } catch (error) {
+    console.error("List public active advertisements error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch active advertisements",
+    });
+  }
+};
+
 export const listAdvertisementsByVendor = async (
   req: AuthRequest,
   res: Response,
