@@ -362,23 +362,38 @@ export const listPublicActiveAdvertisements = async (
       ],
     })
       .sort({ endDate: 1, startDate: 1, createdAt: -1 })
-      .populate("vendor", "name")
+      .populate("vendor", "name vendorInfo vendorApplication profileImage")
       .select("title content advertisementType startDate endDate imageUrl vendor")
       .lean();
 
-    const normalized = advertisements.map((ad: any) => ({
-      id: String(ad._id),
-      title: ad.title,
-      content: ad.content,
-      advertisementType: ad.advertisementType,
-      imageUrl: ad.imageUrl,
-      startDate: ad.startDate ? new Date(ad.startDate).toISOString() : undefined,
-      endDate: ad.endDate ? new Date(ad.endDate).toISOString() : undefined,
-      vendorName:
-        ad?.vendor && typeof ad.vendor === "object" && typeof ad.vendor.name === "string"
-          ? ad.vendor.name
-          : "Verified Vendor",
-    }));
+    const normalized = advertisements.map((ad: any) => {
+      const vendor = ad?.vendor && typeof ad.vendor === "object" ? ad.vendor : null;
+      const vendorName =
+        vendor?.vendorInfo?.businessName ||
+        vendor?.vendorApplication?.business?.businessName ||
+        vendor?.name ||
+        "Verified Vendor";
+      const vendorCategory =
+        vendor?.vendorApplication?.business?.businessCategory || undefined;
+      const vendorLogoUrl =
+        vendor?.vendorInfo?.logoUrl ||
+        vendor?.vendorApplication?.documents?.logoUrl ||
+        vendor?.profileImage ||
+        undefined;
+
+      return {
+        id: String(ad._id),
+        title: ad.title,
+        content: ad.content,
+        advertisementType: ad.advertisementType,
+        imageUrl: ad.imageUrl,
+        startDate: ad.startDate ? new Date(ad.startDate).toISOString() : undefined,
+        endDate: ad.endDate ? new Date(ad.endDate).toISOString() : undefined,
+        vendorName,
+        vendorCategory,
+        vendorLogoUrl,
+      };
+    });
 
     return res.json({ success: true, advertisements: normalized });
   } catch (error) {

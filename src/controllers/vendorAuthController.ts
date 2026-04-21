@@ -959,12 +959,25 @@ export const getPublicApprovedVendors = async (req: Request, res: Response) => {
         undefined;
 
       const category = vendor.vendorApplication?.business?.businessCategory;
+      const location =
+        vendor.vendorInfo?.address ||
+        vendor.vendorApplication?.business?.businessAddress ||
+        undefined;
+      const businessType = vendor.vendorApplication?.business?.businessType;
+      const offering = vendor.vendorApplication?.business?.typeofoffering;
+      const serviceArea = vendor.vendorApplication?.business?.serviceArea;
+      const operatingHours = vendor.vendorApplication?.business?.operatingHours;
 
       return {
         id: vendor._id.toString(),
         name: businessName,
         logoUrl,
         category,
+        location,
+        businessType,
+        offering,
+        serviceArea,
+        operatingHours,
       };
     });
 
