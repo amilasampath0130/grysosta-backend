@@ -17,12 +17,21 @@ import {
   getOtpMsLeft,
   remainingOtpAttempts,
 } from "../lib/otpPolicy.js";
+import {
+  isStrongPassword,
+  STRONG_PASSWORD_ERROR,
+} from "../lib/passwordPolicy.js";
 
 /* =====================================================
    CONFIG
 ===================================================== */
 
 const VENDOR_SESSION_MINUTES = 30;
+const RESET_OTP_EXPIRY_MS = 5 * 60 * 1000;
+const RESET_OTP_MAX_REQUESTS = 3;
+const RESET_OTP_WINDOW_MS = 10 * 60 * 1000;
+const RESET_OTP_MAX_FAILED_ATTEMPTS = 5;
+const RESET_OTP_LOCK_MS = 60 * 60 * 1000;
 
 const splitPossibleUrls = (value: unknown): string[] => {
   const raw = String(value || "").trim();
@@ -74,6 +83,47 @@ const buildOtpCooldownPayload = (user: {
     msLeft,
     remainingAttempts: remainingOtpAttempts(user.adminOtpFailedAttempts),
   };
+};
+
+const getMsUntil = (until?: Date): number => {
+  if (!until) return 0;
+  return Math.max(0, new Date(until).getTime() - Date.now());
+};
+
+const clearVendorResetOtp = (user: any): void => {
+  user.resetOtp = undefined;
+  user.resetOtpExpires = undefined;
+  user.resetOtpSentAt = undefined;
+};
+
+const enforceVendorResetOtpRequestLimit = (user: any) => {
+  const lockMsLeft = getMsUntil(user.resetOtpLockUntil);
+  if (lockMsLeft > 0) {
+    return { allowed: false, locked: true, msLeft: lockMsLeft };
+  }
+
+  const now = new Date();
+  const windowStart = user.resetOtpRequestWindowStart
+    ? new Date(user.resetOtpRequestWindowStart)
+    : null;
+  const elapsedInWindow = windowStart
+    ? now.getTime() - windowStart.getTime()
+    : Number.POSITIVE_INFINITY;
+
+  if (!windowStart || elapsedInWindow > RESET_OTP_WINDOW_MS) {
+    user.resetOtpRequestWindowStart = now;
+    user.resetOtpRequestCount = 0;
+  }
+
+  const requestCount = Number(user.resetOtpRequestCount) || 0;
+  if (requestCount >= RESET_OTP_MAX_REQUESTS) {
+    user.resetOtpLockUntil = new Date(Date.now() + RESET_OTP_LOCK_MS);
+    clearVendorResetOtp(user);
+    return { allowed: false, locked: true, msLeft: RESET_OTP_LOCK_MS };
+  }
+
+  user.resetOtpRequestCount = requestCount + 1;
+  return { allowed: true, locked: false, msLeft: 0 };
 };
 
 /* =====================================================
@@ -317,6 +367,182 @@ export const verifyVendorOtp = async (req: Request, res: Response) => {
 };
 
 /* =====================================================
+   REQUEST VENDOR PASSWORD RESET OTP
+===================================================== */
+
+export const requestVendorPasswordResetOtp = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const { email } = req.body as { email?: string };
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required",
+      });
+    }
+
+    const user = await User.findOne({ email, role: "vendor" });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Vendor account not found",
+      });
+    }
+
+    const requestCheck = enforceVendorResetOtpRequestLimit(user);
+    if (!requestCheck.allowed) {
+      await user.save();
+      return res.status(423).json({
+        success: false,
+        message: `Too many reset OTP requests. Try again in ${formatOtpDelay(requestCheck.msLeft)}.`,
+        msLeft: requestCheck.msLeft,
+      });
+    }
+
+    const otp = generateOtp();
+    user.resetOtp = await bcrypt.hash(otp, 10);
+    user.resetOtpExpires = new Date(Date.now() + RESET_OTP_EXPIRY_MS);
+    user.resetOtpSentAt = new Date();
+    user.resetOtpFailedAttempts = 0;
+    await user.save();
+
+    await sendEmail(
+      user.email,
+      "Vendor Password Reset Code",
+      `<h2>Your vendor password reset code</h2>
+       <h1>${otp}</h1>
+       <p>Expires in ${Math.floor(RESET_OTP_EXPIRY_MS / (60 * 1000))} minutes</p>`,
+    );
+
+    return res.json({
+      success: true,
+      message: "Password reset code sent",
+    });
+  } catch (error) {
+    console.error("requestVendorPasswordResetOtp failed:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to send reset code",
+    });
+  }
+};
+
+/* =====================================================
+   RESET VENDOR PASSWORD WITH OTP
+===================================================== */
+
+export const resetVendorPasswordWithOtp = async (
+  req: Request,
+  res: Response,
+) => {
+  try {
+    const { email, otp, newPassword, confirmPassword } = req.body as {
+      email?: string;
+      otp?: string;
+      newPassword?: string;
+      confirmPassword?: string;
+    };
+
+    if (!email || !otp || !newPassword || !confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Email, OTP, new password, and confirm password are required",
+      });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "Passwords do not match",
+      });
+    }
+
+    if (!isStrongPassword(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message: STRONG_PASSWORD_ERROR,
+      });
+    }
+
+    const user = await User.findOne({ email, role: "vendor" });
+    if (!user || !user.resetOtp || !user.resetOtpExpires) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset code",
+      });
+    }
+
+    const lockMsLeft = getMsUntil(user.resetOtpLockUntil);
+    if (lockMsLeft > 0) {
+      return res.status(423).json({
+        success: false,
+        message: `Reset OTP is locked. Try again in ${formatOtpDelay(lockMsLeft)}.`,
+        msLeft: lockMsLeft,
+      });
+    }
+
+    if (new Date(user.resetOtpExpires).getTime() < Date.now()) {
+      clearVendorResetOtp(user);
+      await user.save();
+
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired reset code",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(otp, user.resetOtp);
+    if (!isMatch) {
+      user.resetOtpFailedAttempts = (Number(user.resetOtpFailedAttempts) || 0) + 1;
+      const attemptsLeft = Math.max(
+        0,
+        RESET_OTP_MAX_FAILED_ATTEMPTS - Number(user.resetOtpFailedAttempts),
+      );
+
+      if (attemptsLeft === 0) {
+        user.resetOtpLockUntil = new Date(Date.now() + RESET_OTP_LOCK_MS);
+        clearVendorResetOtp(user);
+        await user.save();
+
+        return res.status(423).json({
+          success: false,
+          message: `Invalid OTP. Maximum attempts reached. Reset OTP locked for ${formatOtpDelay(RESET_OTP_LOCK_MS)}.`,
+          remainingAttempts: 0,
+          msLeft: RESET_OTP_LOCK_MS,
+        });
+      }
+
+      await user.save();
+      return res.status(400).json({
+        success: false,
+        message: `Invalid OTP. ${attemptsLeft} attempt(s) remaining.`,
+        remainingAttempts: attemptsLeft,
+      });
+    }
+
+    user.vendorDashboardPassword = newPassword;
+    user.resetOtpFailedAttempts = 0;
+    user.resetOtpLockUntil = undefined;
+    clearVendorResetOtp(user);
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: "Password reset successful. Please login.",
+    });
+  } catch (error) {
+    console.error("resetVendorPasswordWithOtp failed:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to reset password",
+    });
+  }
+};
+
+/* =====================================================
    VENDOR PROFILE
 ===================================================== */
 
@@ -336,6 +562,10 @@ export const getVendorProfile = async (req: AuthRequest, res: Response) => {
     delete (baseUser as any).adminOtp;
     delete (baseUser as any).adminOtpExpires;
     delete (baseUser as any).adminOtpSentAt;
+    delete (baseUser as any).resetOtp;
+    delete (baseUser as any).resetOtpExpires;
+    delete (baseUser as any).resetOtpSentAt;
+    delete (baseUser as any).resetOtpLockUntil;
     delete (baseUser as any).emailOtp;
     delete (baseUser as any).emailOtpExpires;
     delete (baseUser as any).emailOtpSentAt;
@@ -479,10 +709,10 @@ export const submitVendorInfo = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    if (!vendorDashboardPassword || String(vendorDashboardPassword).length < 8) {
+    if (!isStrongPassword(String(vendorDashboardPassword || ""))) {
       return res.status(400).json({
         success: false,
-        message: "vendorDashboardPassword must be at least 8 characters",
+        message: STRONG_PASSWORD_ERROR,
       });
     }
 
@@ -825,10 +1055,10 @@ export const saveVendorProgress = async (req: AuthRequest, res: Response) => {
 
     // Vendor dashboard password (optional on save)
     if (vendorDashboardPassword) {
-      if (String(vendorDashboardPassword).length < 8) {
+      if (!isStrongPassword(String(vendorDashboardPassword))) {
         return res.status(400).json({
           success: false,
-          message: "vendorDashboardPassword must be at least 8 characters",
+          message: STRONG_PASSWORD_ERROR,
         });
       }
       targetUser.vendorDashboardPassword = String(vendorDashboardPassword);

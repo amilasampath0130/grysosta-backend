@@ -4,6 +4,8 @@ import {
   verifyVendorOtp,
   resendVendorOtp,
   vendorOtpStatus,
+  requestVendorPasswordResetOtp,
+  resetVendorPasswordWithOtp,
   getVendorProfile,
   vendorLogout,
   submitVendorInfo,
@@ -35,6 +37,10 @@ router.get("/otp-status", vendorOtpStatus);
 
 //== Verify OTP ==
 router.post("/verify-otp", verifyVendorOtp);
+
+//== Vendor Password Reset ==
+router.post("/request-password-reset", requestVendorPasswordResetOtp);
+router.post("/reset-password", resetVendorPasswordWithOtp);
 
 //== Logout ==
 router.post("/logout", vendorLogout);

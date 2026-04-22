@@ -37,6 +37,13 @@ export interface IUser {
   otpLockUntil?: Date;
   adminPasswordResetToken?: string;
   adminPasswordResetExpires?: Date;
+  resetOtp?: string;
+  resetOtpExpires?: Date;
+  resetOtpSentAt?: Date;
+  resetOtpRequestCount?: number;
+  resetOtpRequestWindowStart?: Date;
+  resetOtpFailedAttempts?: number;
+  resetOtpLockUntil?: Date;
 
   // Email OTP (registration verification)
   emailOtp?: string;
@@ -260,6 +267,13 @@ const userSchema = new mongoose.Schema<IUser>(
     otpLockUntil: { type: Date },
     adminPasswordResetToken: { type: String },
     adminPasswordResetExpires: { type: Date },
+    resetOtp: { type: String },
+    resetOtpExpires: { type: Date },
+    resetOtpSentAt: { type: Date },
+    resetOtpRequestCount: { type: Number },
+    resetOtpRequestWindowStart: { type: Date },
+    resetOtpFailedAttempts: { type: Number },
+    resetOtpLockUntil: { type: Date },
 
     // Email OTP
     emailOtp: { type: String },
