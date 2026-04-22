@@ -1,9 +1,15 @@
 import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 import User, { IUser } from "../models/User.js";
+import Offer from "../models/Offer.js";
+import Advertisement from "../models/Advertisement.js";
+import UserPoints from "../models/UserPoints.js";
+import GameSession from "../models/GameSession.js";
 import { AuthRequest, generateToken } from "./authController.js";
 import { generateOtp } from "../utils/generateOtp.js";
 import { sendEmail } from "../utils/sendEmail.js";
+import { deleteCloudinaryImage } from "../lib/cloudinary.js";
+import { requireStripe } from "../lib/stripeClient.js";
 import {
   OTP_EXPIRY_MS,
   assignOtpToUser,
@@ -53,6 +59,97 @@ const sendAdminOtpEmail = async (email: string, otp: string): Promise<void> => {
     logError("LOGIN EMAIL ERROR", error, { email });
     throw error;
   }
+};
+
+const safeDeleteCloudinaryImage = async (publicId?: string) => {
+  if (!publicId) return;
+
+  try {
+    await deleteCloudinaryImage(publicId);
+  } catch (error) {
+    logError("CLOUDINARY DELETE ERROR", error, { publicId });
+  }
+};
+
+const purgeUserOwnedMedia = async (user: IUser) => {
+  const vendorDocPublicIds = [
+    user.vendorInfo?.logoPublicId,
+    user.vendorApplication?.documents?.logoPublicId,
+    user.vendorApplication?.documents?.userIdImagePublicId,
+    user.vendorApplication?.documents?.businessRegImagePublicId,
+  ].filter((id): id is string => Boolean(id));
+
+  const uniquePublicIds = [...new Set(vendorDocPublicIds)];
+  await Promise.all(uniquePublicIds.map((publicId) => safeDeleteCloudinaryImage(publicId)));
+};
+
+const cancelVendorStripeSubscriptionIfAny = async (user: IUser) => {
+  const subscriptionId = String(
+    user.vendorSubscription?.stripeSubscriptionId || "",
+  ).trim();
+
+  if (!subscriptionId) return;
+
+  try {
+    const stripe = requireStripe();
+    await stripe.subscriptions.cancel(subscriptionId);
+  } catch (error: any) {
+    const isMissingResource =
+      error?.type === "StripeInvalidRequestError" &&
+      error?.code === "resource_missing";
+
+    if (!isMissingResource) {
+      logError("STRIPE CANCEL SUBSCRIPTION ERROR", error, {
+        subscriptionId,
+        userId: user._id.toString(),
+      });
+    }
+  }
+};
+
+const purgeVendorRecords = async (vendorId: string) => {
+  const [offers, advertisements] = await Promise.all([
+    Offer.find({ vendor: vendorId }).select("imagePublicId"),
+    Advertisement.find({ vendor: vendorId }).select("imagePublicId"),
+  ]);
+
+  const mediaPublicIds = [
+    ...offers.map((item) => item.imagePublicId),
+    ...advertisements.map((item) => item.imagePublicId),
+  ].filter((id): id is string => Boolean(id));
+
+  const uniquePublicIds = [...new Set(mediaPublicIds)];
+
+  await Promise.all([
+    Offer.deleteMany({ vendor: vendorId }),
+    Advertisement.deleteMany({ vendor: vendorId }),
+  ]);
+
+  await Promise.all(uniquePublicIds.map((publicId) => safeDeleteCloudinaryImage(publicId)));
+};
+
+const purgeUserRecords = async (userId: string) => {
+  await Promise.all([
+    UserPoints.deleteOne({ userId }),
+    GameSession.deleteMany({ userId }),
+  ]);
+};
+
+const deleteUserWithRelations = async (user: IUser) => {
+  const userId = user._id.toString();
+
+  await Promise.all([
+    purgeUserRecords(userId),
+    purgeUserOwnedMedia(user),
+    (user.role === "vendor" || user.vendorStatus === "PENDING")
+      ? purgeVendorRecords(userId)
+      : Promise.resolve(),
+    (user.role === "vendor" || user.vendorStatus === "PENDING")
+      ? cancelVendorStripeSubscriptionIfAny(user)
+      : Promise.resolve(),
+  ]);
+
+  await User.deleteOne({ _id: user._id });
 };
 
 const buildOtpCooldownResponse = (res: Response, user: IUser) => {
@@ -265,7 +362,8 @@ export const deleteUser = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    await User.deleteOne({ _id: user._id });
+    await deleteUserWithRelations(user);
+
     return res.json({
       success: true,
       message: "User deleted",
@@ -295,7 +393,8 @@ export const deleteVendor = async (req: AuthRequest, res: Response) => {
       });
     }
 
-    await User.deleteOne({ _id: vendor._id });
+    await deleteUserWithRelations(vendor);
+
     return res.json({
       success: true,
       message: "Vendor deleted",
