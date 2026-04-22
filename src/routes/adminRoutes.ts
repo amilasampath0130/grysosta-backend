@@ -12,6 +12,9 @@ import {
   getAllAdmins,
   deleteUser,
   deleteVendor,
+  requestAdminPasswordReset,
+  verifyAdminPasswordResetToken,
+  resetAdminPasswordWithToken,
 } from "../controllers/adminAuthController.js";
 import {
   listSubscriptionPlansAdmin,
@@ -51,6 +54,9 @@ router.get(
   getAdminProfile,
 );
 router.post("/verify-otp", verifyAdminOtp);
+router.post("/request-password-reset", requestAdminPasswordReset);
+router.post("/verify-reset-token", verifyAdminPasswordResetToken);
+router.post("/reset-password", resetAdminPasswordWithToken);
 
 router.get(
   "/subscription-plans",

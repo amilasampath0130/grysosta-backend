@@ -19,7 +19,7 @@ export interface IUser {
   profileImage?: string;
 
   // Auth & role
-  role: "user" | "admin" | "vendor";
+  role: "user" | "admin" | "superadmin" | "vendor";
   authProvider: "local" | "google";
   isVerified: boolean;
 
@@ -29,6 +29,14 @@ export interface IUser {
   adminOtpSentAt?: Date;
   adminOtpSendCount?: number;
   adminOtpFailedAttempts?: number;
+  adminLoginFailedAttempts?: number;
+  adminLoginLockUntil?: Date;
+  otpAttempts?: number;
+  otpRequestCount?: number;
+  otpRequestWindowStart?: Date;
+  otpLockUntil?: Date;
+  adminPasswordResetToken?: string;
+  adminPasswordResetExpires?: Date;
 
   // Email OTP (registration verification)
   emailOtp?: string;
@@ -223,7 +231,7 @@ const userSchema = new mongoose.Schema<IUser>(
     // Auth
     role: {
       type: String,
-      enum: ["user", "admin", "vendor"],
+      enum: ["user", "admin", "superadmin", "vendor"],
       default: "user",
     },
 
@@ -244,6 +252,14 @@ const userSchema = new mongoose.Schema<IUser>(
     adminOtpSentAt: { type: Date },
     adminOtpSendCount: { type: Number },
     adminOtpFailedAttempts: { type: Number },
+    adminLoginFailedAttempts: { type: Number },
+    adminLoginLockUntil: { type: Date },
+    otpAttempts: { type: Number },
+    otpRequestCount: { type: Number },
+    otpRequestWindowStart: { type: Date },
+    otpLockUntil: { type: Date },
+    adminPasswordResetToken: { type: String },
+    adminPasswordResetExpires: { type: Date },
 
     // Email OTP
     emailOtp: { type: String },

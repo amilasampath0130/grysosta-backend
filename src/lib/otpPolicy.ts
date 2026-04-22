@@ -3,7 +3,7 @@ import type { IUser } from "../models/User.js";
 const OTP_COOLDOWN_STEPS_MS = [30_000, 60_000, 2 * 60 * 60 * 1000] as const;
 
 export const OTP_EXPIRY_MS = 5 * 60 * 1000;
-export const MAX_OTP_VERIFY_ATTEMPTS = 2;
+export const MAX_OTP_VERIFY_ATTEMPTS = 5;
 
 export const getOtpCooldownMs = (sendCount?: number | null): number => {
   const normalizedSendCount = Math.max(1, Number(sendCount) || 1);
@@ -54,6 +54,7 @@ export const assignOtpToUser = (
   user.adminOtpSentAt = new Date();
   user.adminOtpSendCount = (Number(user.adminOtpSendCount) || 0) + 1;
   user.adminOtpFailedAttempts = 0;
+  user.otpAttempts = 0;
 };
 
 export const clearOtpFromUser = (user: IUser): void => {
