@@ -386,19 +386,18 @@ export const requestVendorPasswordResetOtp = async (
 
     const user = await User.findOne({ email, role: "vendor" });
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "Vendor account not found",
+      return res.json({
+        success: true,
+        message: "If the account exists, a code has been sent to your email.",
       });
     }
 
     const requestCheck = enforceVendorResetOtpRequestLimit(user);
     if (!requestCheck.allowed) {
       await user.save();
-      return res.status(423).json({
-        success: false,
-        message: `Too many reset OTP requests. Try again in ${formatOtpDelay(requestCheck.msLeft)}.`,
-        msLeft: requestCheck.msLeft,
+      return res.json({
+        success: true,
+        message: "If the account exists, a code has been sent to your email.",
       });
     }
 
@@ -419,7 +418,7 @@ export const requestVendorPasswordResetOtp = async (
 
     return res.json({
       success: true,
-      message: "Password reset code sent",
+      message: "If the account exists, a code has been sent to your email.",
     });
   } catch (error) {
     console.error("requestVendorPasswordResetOtp failed:", error);
