@@ -6,6 +6,7 @@ import {
   approveOffer,
   createOffer,
   deleteOffer,
+  listAdminOffers,
   listActiveOffers,
   listMyOffers,
   listPendingOffers,
@@ -25,6 +26,12 @@ router.get(
   authenticateToken,
   authorizeRoles("admin"),
   listActiveOffers,
+);
+router.get(
+  "/admin/all",
+  authenticateToken,
+  authorizeRoles("admin"),
+  listAdminOffers,
 );
 router.get("/me", authenticateToken, authorizeRoles("vendor"), listMyOffers);
 

@@ -29,6 +29,28 @@ const validateStartEndDates = (startDate?: Date, endDate?: Date): string | null 
   return null;
 };
 
+const getAdvertisementLifecycle = (
+  status: "PENDING" | "APPROVED" | "REJECTED" | "STOPPED",
+  startDate?: Date | string,
+  endDate?: Date | string,
+) => {
+  const now = new Date();
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+
+  if (status === "APPROVED") {
+    if (end && end < now) {
+      return "EXPIRED";
+    }
+    if (start && start > now) {
+      return "SCHEDULED";
+    }
+    return "ACTIVE";
+  }
+
+  return status;
+};
+
 export const createAdvertisement = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
@@ -429,6 +451,55 @@ export const listAdvertisementsByVendor = async (
     return res.status(500).json({
       success: false,
       message: "Failed to fetch vendor advertisements",
+    });
+  }
+};
+
+export const listAdminAdvertisements = async (
+  req: AuthRequest,
+  res: Response,
+) => {
+  try {
+    const advertisements = await Advertisement.find({})
+      .sort({ createdAt: -1 })
+      .populate("vendor", "name email vendorInfo")
+      .select(
+        "title content advertisementType startDate endDate imageUrl status createdAt updatedAt approvedAt reviewNote reviewedAt stopNote stoppedAt vendor isPaid paymentAmountCents paymentCurrency",
+      )
+      .lean();
+
+    const normalizedAdvertisements = advertisements.map((advertisement: any) => ({
+      ...advertisement,
+      lifecycle: getAdvertisementLifecycle(
+        advertisement.status,
+        advertisement.startDate,
+        advertisement.endDate,
+      ),
+    }));
+
+    const stats = normalizedAdvertisements.reduce(
+      (acc, advertisement) => {
+        acc.total += 1;
+        if (advertisement.lifecycle === "ACTIVE") acc.active += 1;
+        if (advertisement.lifecycle === "EXPIRED") acc.expired += 1;
+        if (advertisement.lifecycle === "PENDING") acc.pending += 1;
+        if (advertisement.lifecycle === "STOPPED") acc.stopped += 1;
+        if (advertisement.lifecycle === "SCHEDULED") acc.scheduled += 1;
+        return acc;
+      },
+      { total: 0, active: 0, expired: 0, pending: 0, stopped: 0, scheduled: 0 },
+    );
+
+    return res.json({
+      success: true,
+      advertisements: normalizedAdvertisements,
+      stats,
+    });
+  } catch (error) {
+    console.error("List admin advertisements error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch advertisements",
     });
   }
 };

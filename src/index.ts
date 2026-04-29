@@ -11,6 +11,7 @@ import advertisementRoutes from "./routes/advertisementRoutes.js";
 import paymentRoutes from "./routes/payment.js";
 import offerRoutes from "./routes/offerRoutes.js";
 import solanaPaymentRoutes from "./routes/solanaPaymentRoutes.js";
+import { startExpiredContentCleanupJob } from "./lib/expiredContentCleanup.js";
 const app: Application = express();
 const PORT: number = Number(process.env.PORT) || 5000;
 
@@ -65,5 +66,7 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(` Server running on port ${PORT}`);
-  connectDB();
+  void connectDB().then(() => {
+    startExpiredContentCleanupJob();
+  });
 });

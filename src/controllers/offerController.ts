@@ -45,6 +45,29 @@ const parseStringArray = (value: unknown): string[] => {
 const isActiveSubscriptionStatus = (status?: string) =>
   status === "active" || status === "trialing";
 
+const getTodayStart = () => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const getOfferLifecycle = (
+  status: "PENDING" | "APPROVED" | "REJECTED",
+  validUntil?: Date | string,
+) => {
+  const today = getTodayStart();
+  const expiry = validUntil ? new Date(validUntil) : null;
+
+  if (status === "APPROVED") {
+    if (expiry && expiry < today) {
+      return "EXPIRED";
+    }
+    return "ACTIVE";
+  }
+
+  return status;
+};
+
 export const createOffer = async (req: AuthRequest, res: Response) => {
   try {
     if (!req.user) {
@@ -278,6 +301,42 @@ export const listActiveOffers = async (req: AuthRequest, res: Response) => {
     return res
       .status(500)
       .json({ success: false, message: "Failed to fetch active offers" });
+  }
+};
+
+export const listAdminOffers = async (req: AuthRequest, res: Response) => {
+  try {
+    const offers = await Offer.find({})
+      .sort({ createdAt: -1 })
+      .populate("vendor", "name email vendorInfo")
+      .select(
+        "title description offerType discountValue location activeDays validUntil redemptionLimit imageUrl status createdAt updatedAt approvedAt reviewNote reviewedAt vendor",
+      )
+      .lean();
+
+    const normalizedOffers = offers.map((offer: any) => ({
+      ...offer,
+      lifecycle: getOfferLifecycle(offer.status, offer.validUntil),
+    }));
+
+    const stats = normalizedOffers.reduce(
+      (acc, offer) => {
+        acc.total += 1;
+        if (offer.lifecycle === "ACTIVE") acc.active += 1;
+        if (offer.lifecycle === "EXPIRED") acc.expired += 1;
+        if (offer.lifecycle === "PENDING") acc.pending += 1;
+        if (offer.lifecycle === "REJECTED") acc.rejected += 1;
+        return acc;
+      },
+      { total: 0, active: 0, expired: 0, pending: 0, rejected: 0 },
+    );
+
+    return res.json({ success: true, offers: normalizedOffers, stats });
+  } catch (error) {
+    console.error("List admin offers error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to fetch offers" });
   }
 };
 

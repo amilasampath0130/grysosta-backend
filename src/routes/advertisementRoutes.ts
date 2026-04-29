@@ -9,6 +9,7 @@ import {
   getMyAdvertisementById,
   informAdvertisementVendor,
   listActiveAdvertisements,
+  listAdminAdvertisements,
   listMyAdvertisements,
   listPublicActiveAdvertisements,
   listAdvertisementsByVendor,
@@ -64,6 +65,12 @@ router.get(
   authenticateToken,
   authorizeRoles("admin"),
   listActiveAdvertisements,
+);
+router.get(
+  "/admin/all",
+  authenticateToken,
+  authorizeRoles("admin"),
+  listAdminAdvertisements,
 );
 
 router.get("/public/active", listPublicActiveAdvertisements);
